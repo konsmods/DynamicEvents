@@ -79,7 +79,6 @@ local EVENT = {
         local outfit = DE.pick(zombieOutfits)
         EH.spawnZombies(x, y, z, 6, 2, outfit)
 
-        DE.log("heli_crash spawned at (%d, %d, %d)", x, y, z)
         return objects
     end,
 

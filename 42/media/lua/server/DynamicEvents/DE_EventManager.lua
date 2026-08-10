@@ -7,6 +7,8 @@ DE.EventManager = {
     cooldowns = {},
     usedLocations = {},
     _nextId = 0,
+    _dirty = false,
+    _wasRestored = false,
 }
 
 local EM = DE.EventManager
@@ -60,6 +62,7 @@ end
 
 function EM.startCooldown(id, hours)
     EM.cooldowns[id] = DE.gameHours() + (hours or EM.get(id).cooldownHours)
+    EM._dirty = true
     DE.dbg("cooldown for '%s' until hour %.1f", id, EM.cooldowns[id])
 end
 
@@ -93,20 +96,15 @@ function EM.addActive(typeId, x, y, z, objects)
         spawnedAt = DE.gameHours(),
         objects = objects
     }
+    EM._dirty = true
     DE.log("event '%s' [%s] now active at (%d, %d, %d) with %d objects", typeId, uid, x, y, z, #objects)
     return uid
 end
 
 function EM.removeActive(uid)
     EM.active[uid] = nil
+    EM._dirty = true
     DE.log("event [%s] removed from active", uid)
-end
-
-function EM.isActive(typeId)
-    for _, data in pairs(EM.active) do
-        if data.typeId == typeId then return true end
-    end
-    return false
 end
 
 function EM.getActiveEvents()
@@ -124,23 +122,8 @@ end
 function EM.markLocationUsed(id, loc)
     EM.usedLocations[id] = EM.usedLocations[id] or {}
     EM.usedLocations[id][makeLocKey(loc)] = true
+    EM._dirty = true
     DE.dbg("marked location '%s' used for event '%s'", loc.name or makeLocKey(loc), id)
-end
-
-function EM.unmarkLocationUsed(id, loc)
-    if EM.usedLocations[id] then
-        EM.usedLocations[id][makeLocKey(loc)] = nil
-    end
-end
-
-function EM.hasUnusedLocations(id)
-    local def = EM.get(id)
-    if not def or not def.locations then return false end
-    local used = EM.usedLocations[id] or {}
-    for _, loc in ipairs(def.locations) do
-        if not used[makeLocKey(loc)] then return true end
-    end
-    return false
 end
 
 function EM.pickRandomLocation(def, skipUsed)
@@ -159,4 +142,76 @@ function EM.pickRandomLocation(def, skipUsed)
     end
 
     return def.locations[DE.rand(1, #def.locations)]
+end
+
+-- ============================================================================
+-- Persistence
+-- ============================================================================
+
+function EM.saveState()
+    if not EM._dirty then return end
+    EM._dirty = false
+
+    local data = {}
+    data.active = {}
+    for uid, ev in pairs(EM.active) do
+        data.active[uid] = {
+            typeId = ev.typeId,
+            x = ev.x, y = ev.y, z = ev.z,
+            spawnedAt = ev.spawnedAt,
+        }
+    end
+    data.cooldowns = {}
+    for id, untilHour in pairs(EM.cooldowns) do
+        data.cooldowns[id] = untilHour
+    end
+    data.usedLocations = {}
+    for id, locs in pairs(EM.usedLocations) do
+        data.usedLocations[id] = {}
+        for locKey in pairs(locs) do
+            data.usedLocations[id][locKey] = true
+        end
+    end
+    data._nextId = EM._nextId
+
+    getGameTime():getModData().DynamicEvents = data
+    DE.dbg("saved state: %d active, %d event types", EM.getActiveCount(), #EM.order)
+end
+
+function EM.loadState()
+    local modData = getGameTime():getModData()
+    local data = modData and modData.DynamicEvents
+    if not data then return false end
+
+    if data.active then
+        for uid, ev in pairs(data.active) do
+            EM.active[uid] = {
+                typeId = ev.typeId,
+                x = ev.x, y = ev.y, z = ev.z,
+                spawnedAt = ev.spawnedAt,
+                objects = {},  -- objects can't survive serialization
+            }
+        end
+    end
+    if data.cooldowns then
+        for id, untilHour in pairs(data.cooldowns) do
+            EM.cooldowns[id] = untilHour
+        end
+    end
+    if data.usedLocations then
+        for id, locs in pairs(data.usedLocations) do
+            EM.usedLocations[id] = EM.usedLocations[id] or {}
+            for locKey in pairs(locs) do
+                EM.usedLocations[id][locKey] = true
+            end
+        end
+    end
+    if data._nextId then
+        EM._nextId = data._nextId
+    end
+
+    EM._wasRestored = true
+    DE.log("loaded state: %d active events, %d event types restored",
+        EM.getActiveCount(), EM.count())
+    return true
 end

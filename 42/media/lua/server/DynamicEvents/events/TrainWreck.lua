@@ -42,7 +42,6 @@ local EVENT = {
         -- Zombies
         EH.spawnZombies(x, y, z, 4, 4)
 
-        DE.log("train_wreck spawned at (%d, %d, %d)", x, y, z)
         return objects
     end,
 

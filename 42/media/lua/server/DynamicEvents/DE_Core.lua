@@ -59,27 +59,6 @@ function DE.pick(list)
     return list[DE.rand(1, #list)]
 end
 
-function DE.weighted(list)
-    if not list or #list == 0 then return nil end
-    local total = 0
-    for i = 1, #list do
-        total = total + (list[i].weight or list[i].w or 1)
-    end
-    if total <= 0 then return nil end
-    local roll = ZombRand(total)
-    for i = 1, #list do
-        roll = roll - (list[i].weight or list[i].w or 1)
-        if roll < 0 then return list[i] end
-    end
-    return list[#list]
-end
-
-function DE.count(spec, default)
-    if spec == nil then return default or 1 end
-    if type(spec) == "number" then return spec end
-    return DE.rand(spec[1], spec[2])
-end
-
 function DE.gameHours()
     return getGameTime():getWorldAgeHours()
 end

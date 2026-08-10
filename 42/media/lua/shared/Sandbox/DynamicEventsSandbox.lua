@@ -13,6 +13,5 @@ SandboxVars.DynamicEvents = {
         heli_crash   = true,
         train_wreck  = true,
         convoy_crash = true,
-        horde        = false,
     },
 }

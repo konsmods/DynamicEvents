@@ -28,7 +28,7 @@ local function isEventEnabled(id)
 end
 
 local function doSpawn(def, x, y, z)
-    DE.log("[DynamicEvents] %s appeared at (%d, %d, %d)", def.name or def.id, x, y, z)
+    DE.log("%s appeared at (%d, %d, %d)", def.name or def.id, x, y, z)
     DE.EventHelpers.playSound(x, y, z, def.sound)
 
     local ok, objects = pcall(def.spawn, x, y, z)
@@ -83,8 +83,10 @@ local function tryFireEvent()
 
     if not DE.Config.enabled then return end
 
-    if gameStartHour and DE.gameHours() - gameStartHour < (DE.Config.gracePeriodHours or 1) then
-        return
+    if not DE.EventManager._wasRestored then
+        if gameStartHour and DE.gameHours() - gameStartHour < (DE.Config.gracePeriodHours or 1) then
+            return
+        end
     end
 
     if DE.EventManager.getActiveCount() >= DE.Config.maxActive then
@@ -174,26 +176,10 @@ local function expireActiveEvents()
     end
 end
 
-local function shutdownCleanup()
-    DE.log("shutdown cleanup: removing %d active events", DE.EventManager.getActiveCount())
-    for uid, data in pairs(DE.EventManager.active) do
-        local def = DE.EventManager.get(data.typeId)
-        if def and def.cleanup then
-            DE.guard(uid .. " shutdown cleanup", function()
-                def.cleanup(data.x, data.y, data.z, data.objects)
-            end)
-        end
-    end
-    DE.EventManager.active = {}
-end
-            DE.EventManager.removeActive(id)
-        end
-    end
-end
-
 local function onTick()
     processPendingSpawns()
     expireActiveEvents()
+    DE.EventManager.saveState()
     ticksSinceLastCheck = ticksSinceLastCheck + 1
     if ticksSinceLastCheck < CHECK_INTERVAL_TICKS then return end
     ticksSinceLastCheck = 0
@@ -202,10 +188,12 @@ end
 
 Events.OnGameStart.Add(function()
     gameStartHour = DE.gameHours()
-    DE.log("scheduler started (grace period: %.1fh)", DE.Config.gracePeriodHours or 1)
+    local restored = DE.EventManager.loadState()
+    if restored then
+        DE.log("scheduler started (restored from save, %d active events)",
+            DE.EventManager.getActiveCount())
+    else
+        DE.log("scheduler started (fresh, grace period: %.1fh)", DE.Config.gracePeriodHours or 1)
+    end
     Events.OnTick.Add(onTick)
-end)
-
-Events.OnGameEnd.Add(function()
-    shutdownCleanup()
 end)

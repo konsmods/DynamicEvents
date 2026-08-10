@@ -60,7 +60,6 @@ local EVENT = {
         -- Zombies (military outfits)
         EH.spawnZombies(x, y, z, 4, 4, "Soldier")
 
-        DE.log("convoy_crash spawned at (%d, %d, %d)", x, y, z)
         return objects
     end,
 

@@ -220,13 +220,8 @@ local function cleanupOne(objData)
     end
 end
 
-function EH.cleanupEvent(x, y, z, objects, customFn)
+function EH.cleanupEvent(x, y, z, objects)
     DE.dbg("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
-    if customFn then
-        DE.guard("customCleanup", function()
-            customFn(x, y, z, objects)
-        end)
-    end
     if objects then
         for _, objData in ipairs(objects) do
             DE.dbg("cleanup: type=%s", objData.type)

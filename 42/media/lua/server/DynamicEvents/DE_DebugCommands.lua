@@ -3,7 +3,7 @@ if isClient() then return end
 DE = DE or {}
 
 local function announceCoords(def, x, y, z)
-    local msg = string.format("[DE] Spawned %s at (%d, %d, %d)", def.name or def.id, x, y, z)
+    local msg = string.format("Spawned %s at (%d, %d, %d)", def.name or def.id, x, y, z)
     DE.log(msg)
     local p = getSpecificPlayer(0)
     if p then p:Say(msg) end
@@ -12,7 +12,7 @@ end
 function DE.Spawn(eventId, x, y, z)
     local def = DE.EventManager.get(eventId)
     if not def then
-        DE.log("[DE] Unknown event: %s", eventId)
+        DE.log("Unknown event: %s", eventId)
         return
     end
 
@@ -21,7 +21,7 @@ function DE.Spawn(eventId, x, y, z)
         if p then
             x, y, z = p:getX(), p:getY(), p:getZ()
         else
-            DE.log("[DE] No player found, using first location")
+            DE.log("No player found, using first location")
             x, y, z = def.locations[1].x, def.locations[1].y, def.locations[1].z or 0
         end
     end
@@ -43,18 +43,18 @@ end
 function DE.SpawnHere(eventId)
     local def = DE.EventManager.get(eventId)
     if not def then
-        DE.log("[DE] Unknown event: %s", eventId)
+        DE.log("Unknown event: %s", eventId)
         return
     end
     local p = getSpecificPlayer(0)
-    if not p then DE.log("[DE] No player found"); return end
+    if not p then DE.log("No player found"); return end
     local px, py, pz = p:getX(), p:getY(), p:getZ()
     DE.Spawn(eventId, px, py, pz)
 end
 
 function DE.SpawnRandom()
     local all = DE.EventManager.all()
-    if #all == 0 then DE.log("[DE] No events registered"); return end
+    if #all == 0 then DE.log("No events registered"); return end
     local def = all[DE.rand(1, #all)]
     DE.Spawn(def.id)
 end
@@ -64,9 +64,9 @@ function DE.ListEvents()
     local active = DE.EventManager.getActiveEvents()
     local msg
     if #active == 0 then
-        msg = "[DE] No active events."
+        msg = "No active events."
     else
-        msg = string.format("[DE] %d active events: ", #active)
+        msg = string.format("%d active events: ", #active)
         for _, ev in ipairs(active) do
             local d = p and math.floor(math.sqrt((ev.x - p:getX())^2 + (ev.y - p:getY())^2)) or "?"
             msg = msg .. string.format("%s at (%d,%d) ~%stiles  ", ev.id, ev.x, ev.y, tostring(d))
@@ -78,15 +78,15 @@ end
 
 function DE.WhereAmI()
     local p = getSpecificPlayer(0)
-    if not p then DE.log("[DE] No player"); return end
-    local msg = string.format("[DE] You are at (%d, %d, %d)", p:getX(), p:getY(), p:getZ())
+    if not p then DE.log("No player"); return end
+    local msg = string.format("You are at (%d, %d, %d)", p:getX(), p:getY(), p:getZ())
     DE.log(msg)
     p:Say(msg)
 end
 
 function DE.CleanupNow()
     if not DE.Config.eventCleanup then
-        DE.log("[DE] eventCleanup is disabled, nothing to expire")
+        DE.log("eventCleanup is disabled, nothing to expire")
         local p = getSpecificPlayer(0)
         if p then p:Say("[DE] Cleanup is OFF (EventCleanup=false)") end
         return
@@ -103,7 +103,7 @@ function DE.CleanupNow()
     end
 
     for id, info in pairs(toExpire) do
-        DE.log("[DE] Expiring '%s' (lifetime %.0fh, spawned %.1fh ago)",
+        DE.log("Expiring '%s' (lifetime %.0fh, spawned %.1fh ago)",
             id, info.lifetime, now - info.data.spawnedAt)
         if info.def and info.def.cleanup then
             DE.guard(id .. " cleanup", function()
@@ -117,7 +117,7 @@ function DE.CleanupNow()
     local count = 0
     for _ in pairs(toExpire) do count = count + 1 end
     if count == 0 then
-        DE.log("[DE] No events ready for expiry (lifetimes: heli=48h, convoy=36h, train=60h)")
+        DE.log("No events ready for expiry")
     end
     if p then p:Say(string.format("[DE] Cleaned up %d expired events", count)) end
 end
@@ -132,7 +132,7 @@ function DE.CleanupAll()
         local data = DE.EventManager.active[id]
         if data then
             local def = DE.EventManager.get(data.typeId)
-            DE.log("[DE] Force-cleaning '%s' (%d objects)", id, data.objects and #data.objects or 0)
+            DE.log("Force-cleaning '%s' (%d objects)", id, data.objects and #data.objects or 0)
             if def and def.cleanup then
                 DE.guard(id .. " cleanup", function()
                     def.cleanup(data.x, data.y, data.z, data.objects)
@@ -144,12 +144,12 @@ function DE.CleanupAll()
 
     local p = getSpecificPlayer(0)
     if p then p:Say(string.format("[DE] Force-cleaned all %d events", #ids)) end
-    DE.log("[DE] Force-cleaned %d events", #ids)
+    DE.log("Force-cleaned %d events", #ids)
 end
 
 function DE.ToggleCleanup()
     DE.Config.eventCleanup = not DE.Config.eventCleanup
-    local msg = string.format("[DE] EventCleanup set to: %s", tostring(DE.Config.eventCleanup))
+    local msg = string.format("EventCleanup set to: %s", tostring(DE.Config.eventCleanup))
     DE.log(msg)
     local p = getSpecificPlayer(0)
     if p then p:Say(msg) end
@@ -184,4 +184,4 @@ function DE.Info()
     if p then p:Say("[DE] Full mod info dumped to console") end
 end
 
-DE.log("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.CleanupNow, DE.CleanupAll, DE.ToggleCleanup, DE.Info")
+DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.CleanupNow, DE.CleanupAll, DE.ToggleCleanup, DE.Info")
