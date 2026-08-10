@@ -6,6 +6,7 @@ DE.EventManager = {
     active = {},
     cooldowns = {},
     usedLocations = {},
+    _nextId = 0,
 }
 
 local EM = DE.EventManager
@@ -82,24 +83,36 @@ function EM.getActiveCount()
     return count
 end
 
-function EM.addActive(id, x, y, z, objects)
-    EM.active[id] = { x = x, y = y, z = z, spawnedAt = DE.gameHours(), objects = objects or {} }
-    DE.log("event '%s' now active at (%d, %d, %d)", id, x, y, z)
+function EM.addActive(typeId, x, y, z, objects)
+    EM._nextId = EM._nextId + 1
+    local uid = typeId .. "_" .. tostring(EM._nextId)
+    objects = objects or {}
+    EM.active[uid] = {
+        typeId = typeId,
+        x = x, y = y, z = z,
+        spawnedAt = DE.gameHours(),
+        objects = objects
+    }
+    DE.log("event '%s' [%s] now active at (%d, %d, %d) with %d objects", typeId, uid, x, y, z, #objects)
+    return uid
 end
 
-function EM.removeActive(id)
-    EM.active[id] = nil
-    DE.log("event '%s' removed from active", id)
+function EM.removeActive(uid)
+    EM.active[uid] = nil
+    DE.log("event [%s] removed from active", uid)
 end
 
-function EM.isActive(id)
-    return EM.active[id] ~= nil
+function EM.isActive(typeId)
+    for _, data in pairs(EM.active) do
+        if data.typeId == typeId then return true end
+    end
+    return false
 end
 
 function EM.getActiveEvents()
     local out = {}
-    for id, data in pairs(EM.active) do
-        out[#out + 1] = { id = id, x = data.x, y = data.y, z = data.z }
+    for uid, data in pairs(EM.active) do
+        out[#out + 1] = { id = data.typeId, uid = uid, x = data.x, y = data.y, z = data.z }
     end
     return out
 end

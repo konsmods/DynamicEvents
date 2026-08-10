@@ -28,16 +28,15 @@ function DE.Spawn(eventId, x, y, z)
     local sx, sy, sz = x, y or 0, z or 0
 
     announceCoords(def, sx, sy, sz)
+    DE.EventHelpers.playSound(sx, sy, sz, def.sound)
 
-    if def.warning and def.warning.ambient and def.warning.ambient.sound then
-        local emitter = getWorld():getFreeEmitter(sx, sy, sz)
-        if emitter then emitter:playSound(def.warning.ambient.sound) end
+    local ok, objects = pcall(def.spawn, sx, sy, sz)
+    if not ok then
+        DE.err("%s spawn failed: %s", def.id, tostring(objects))
+        objects = {}
     end
-
-    local objects = nil
-    DE.guard(def.id .. " spawn", function()
-        objects = def.spawn(sx, sy, sz)
-    end)
+    objects = objects or {}
+    DE.dbg("%s debug spawn returned %d tracked objects", def.id, #objects)
     DE.EventManager.addActive(def.id, sx, sy, sz, objects)
 end
 
@@ -94,10 +93,9 @@ function DE.CleanupNow()
     end
 
     local now = DE.gameHours()
-    local expired = 0
     local toExpire = {}
     for id, data in pairs(DE.EventManager.active) do
-        local def = DE.EventManager.get(id)
+        local def = DE.EventManager.get(data.typeId)
         local lifetime = (def and def.lifetimeHours) or 48
         if now - data.spawnedAt >= lifetime then
             toExpire[id] = { data = data, def = def, lifetime = lifetime }
@@ -113,33 +111,40 @@ function DE.CleanupNow()
             end)
         end
         DE.EventManager.removeActive(id)
-        expired = expired + 1
-    end
-
-    if expired == 0 then
-        DE.log("[DE] No events ready for expiry (lifetimes: heli=48h, convoy=36h, train=60h)")
     end
 
     local p = getSpecificPlayer(0)
-    if p then p:Say(string.format("[DE] Cleaned up %d expired events", expired)) end
+    local count = 0
+    for _ in pairs(toExpire) do count = count + 1 end
+    if count == 0 then
+        DE.log("[DE] No events ready for expiry (lifetimes: heli=48h, convoy=36h, train=60h)")
+    end
+    if p then p:Say(string.format("[DE] Cleaned up %d expired events", count)) end
 end
 
 function DE.CleanupAll()
-    local count = 0
-    for id, data in pairs(DE.EventManager.active) do
-        local def = DE.EventManager.get(id)
-        DE.log("[DE] Force-cleaning '%s'", id)
-        if def and def.cleanup then
-            DE.guard(id .. " cleanup", function()
-                def.cleanup(data.x, data.y, data.z, data.objects)
-            end)
-        end
-        DE.EventManager.removeActive(id)
-        count = count + 1
+    local ids = {}
+    for id in pairs(DE.EventManager.active) do
+        table.insert(ids, id)
     end
+
+    for _, id in ipairs(ids) do
+        local data = DE.EventManager.active[id]
+        if data then
+            local def = DE.EventManager.get(data.typeId)
+            DE.log("[DE] Force-cleaning '%s' (%d objects)", id, data.objects and #data.objects or 0)
+            if def and def.cleanup then
+                DE.guard(id .. " cleanup", function()
+                    def.cleanup(data.x, data.y, data.z, data.objects)
+                end)
+            end
+            DE.EventManager.removeActive(id)
+        end
+    end
+
     local p = getSpecificPlayer(0)
-    if p then p:Say(string.format("[DE] Force-cleaned all %d events", count)) end
-    DE.log("[DE] Force-cleaned %d events", count)
+    if p then p:Say(string.format("[DE] Force-cleaned all %d events", #ids)) end
+    DE.log("[DE] Force-cleaned %d events", #ids)
 end
 
 function DE.ToggleCleanup()
@@ -150,4 +155,33 @@ function DE.ToggleCleanup()
     if p then p:Say(msg) end
 end
 
-DE.log("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.CleanupNow, DE.CleanupAll, DE.ToggleCleanup")
+function DE.Info()
+    local p = getSpecificPlayer(0)
+
+    DE.log("=== DynamicEvents Info ===")
+    DE.log("Version: %s", DE.VERSION)
+    DE.log("Config:")
+    for k, v in pairs(DE.Config) do
+        DE.log("  %s = %s", k, tostring(v))
+    end
+    DE.log("Registered events: %d", DE.EventManager.count())
+    for _, def in ipairs(DE.EventManager.all()) do
+        local locs = def.locations and #def.locations or 0
+        local used = 0
+        local usedLocs = DE.EventManager.usedLocations[def.id]
+        if usedLocs then
+            for _ in pairs(usedLocs) do used = used + 1 end
+        end
+        DE.log("  %s — weight=%d, locations=%d/%d used, cooldown=%dh, lifetime=%dh",
+            def.id, def.weight or 10, used, locs, def.cooldownHours or 24, def.lifetimeHours or 48)
+    end
+    local active = DE.EventManager.getActiveEvents()
+    DE.log("Active events: %d", #active)
+    for _, ev in ipairs(active) do
+        DE.log("  %s at (%d, %d, %d)", ev.id, ev.x, ev.y, ev.z)
+    end
+
+    if p then p:Say("[DE] Full mod info dumped to console") end
+end
+
+DE.log("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.CleanupNow, DE.CleanupAll, DE.ToggleCleanup, DE.Info")

@@ -2,21 +2,34 @@ DE = DE or {}
 
 local EH = DE.EventHelpers
 
--- Custom Helicopter Model:
--- Replace the vehicle line with:
---   EH.spawnSprite(x, y, z, "helicopter_wreck")  -- or place as IsoWorldInventoryObject
+-- ============================================================================
+-- Helicopter Crash Event
+--
+-- CUSTOM 3D MODEL SETUP:
+-- 1. Export your helicopter as .fbx from Blender
+--    - Apply all modifiers, triangulate, convert textures to PNG
+--    - Place .fbx in 42/media/models/helicopter_wreck.fbx
+--    - Place texture in 42/media/textures/helicopter_wreck.png
+-- 2. Scripts at 42/media/scripts/ already set up:
+--    models_heli.txt  — registers the 3D model
+--    items_heli.txt   — defines the world-placed item
+-- 3. Uncomment the model spawn block below and comment the vehicle line
+-- ============================================================================
 
-local loot = {
+local militaryLoot = {
     "Base.HuntingKnife", "Base.Pistol", "Base.9mmClip",
     "Base.Bag_ALICEpack_Army", "Base.CannedFruitCocktail",
     "Base.WaterBottle", "Base.Bandage", "Base.FirstAidKit",
     "Base.AssaultRifle", "Base.556Clip",
 }
 
+local zombieOutfits = { "Soldier", "Ranger", "Police" }
+
 local EVENT = {
     id             = "heli_crash",
     name           = "Helicopter Crash",
     weight         = 10,
+    sound          = "Helicopter",
     cooldownHours  = 48,
     lifetimeHours  = 48,
     minDaysSurvived = 1,
@@ -33,24 +46,38 @@ local EVENT = {
     },
 
     warning = {
-        ambient = { sound = "HeliCrashDistant", radius = 200 },
         delay = 90,
     },
 
     spawn = function(x, y, z)
         local objects = {}
 
-        -- Wreck placeholder
-        EH.merge(objects, EH.spawnVehicle(x, y, z, "Base.PickUpTruckLights", nil))
+        -- Wreckage: placeholder burnt vehicle
+        EH.merge(objects, EH.spawnVehicle(x, y, z, "Base.AmbulanceBurnt", nil))
 
-        -- Scorched ground
+        -- UNCOMMENT THIS when your custom model is ready (and comment the vehicle line above):
+        -- local sq = getCell():getOrCreateGridSquare(x, y, z)
+        -- if sq then
+        --     local item = instanceItem("Base.HelicopterWreck")
+        --     if item then
+        --         sq:AddWorldInventoryItem(item, 0.5, 0.5, 0)
+        --         table.insert(objects, { type = "item", sqx = x, sqy = y, sqz = z, itemType = "Base.HelicopterWreck" })
+        --     end
+        -- end
+
+        -- Scorched earth
         EH.merge(objects, EH.spawnScorchMarks(x, y, z, 1))
 
-        -- Loot
-        EH.merge(objects, EH.spawnLoot(x, y, z, loot, 2, 35))
+        -- Fire and smoke
+        EH.spawnFire(x, y, z, 2)
+        EH.spawnSmoke(x, y, z, 2)
 
-        -- Zombies
-        EH.spawnZombies(x, y, z, 3, 2)
+        -- Military loot scattered around crash site
+        EH.merge(objects, EH.spawnLoot(x, y, z, militaryLoot, 2, 35))
+
+        -- Zombies in military/pilot outfits
+        local outfit = DE.pick(zombieOutfits)
+        EH.spawnZombies(x, y, z, 6, 2, outfit)
 
         DE.log("heli_crash spawned at (%d, %d, %d)", x, y, z)
         return objects

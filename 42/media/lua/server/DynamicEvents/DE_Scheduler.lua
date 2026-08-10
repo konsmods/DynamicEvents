@@ -27,42 +27,17 @@ local function isEventEnabled(id)
     return toggles[id] ~= false
 end
 
-local function doWarning(def, x, y, z)
-    local warning = def.warning
-    if not warning then return end
-
-    if warning.ambient and warning.ambient.sound then
-        DE.guard(def.id .. " warning ambient", function()
-            local emitter = getWorld():getFreeEmitter(x, y, z)
-            if emitter then
-                emitter:playSound(warning.ambient.sound)
-                DE.dbg("played warning sound '%s' for '%s' at (%d, %d, %d)",
-                    warning.ambient.sound, def.id, x, y, z)
-            end
-        end)
-    end
-end
-
 local function doSpawn(def, x, y, z)
-    local msg = string.format("[DynamicEvents] %s appeared at (%d, %d, %d)", def.name or def.id, x, y, z)
-    if isServer() then
-        local online = getOnlinePlayers()
-        if online then
-            for i = 0, online:size() - 1 do
-                local p = online:get(i)
-                if p then p:Say(msg) end
-            end
-        end
-    else
-        local p = getSpecificPlayer(0)
-        if p then p:Say(msg) end
-    end
-    DE.log(msg)
+    DE.log("[DynamicEvents] %s appeared at (%d, %d, %d)", def.name or def.id, x, y, z)
+    DE.EventHelpers.playSound(x, y, z, def.sound)
 
-    local objects = nil
-    DE.guard(def.id .. " spawn", function()
-        objects = def.spawn(x, y, z)
-    end)
+    local ok, objects = pcall(def.spawn, x, y, z)
+    if not ok then
+        DE.err("%s spawn failed: %s", def.id, tostring(objects))
+        objects = {}
+    end
+    objects = objects or {}
+    DE.dbg("%s spawn returned %d tracked objects", def.id, #objects)
     return objects
 end
 
@@ -157,8 +132,6 @@ local function tryFireEvent()
             DE.log("firing event '%s' at (%d, %d, %d)", def.id, location.x, location.y, location.z or 0)
             DE.EventManager.markLocationUsed(def.id, location)
 
-            doWarning(def, location.x, location.y, location.z or 0)
-
             local delay = 0
             if def.warning and def.warning.delay then
                 delay = def.warning.delay
@@ -183,15 +156,15 @@ local function expireActiveEvents()
     local now = DE.gameHours()
     local toExpire = {}
     for id, data in pairs(DE.EventManager.active) do
-        local def = DE.EventManager.get(id)
+        local def = DE.EventManager.get(data.typeId)
         local lifetime = (def and def.lifetimeHours) or 48
         if now - data.spawnedAt >= lifetime then
             toExpire[id] = data
         end
     end
     for id, data in pairs(toExpire) do
-        local def = DE.EventManager.get(id)
-        DE.log("event '%s' expired (lifetime %.0fh)", id, def and def.lifetimeHours or 48)
+        local def = DE.EventManager.get(data.typeId)
+        DE.log("event '%s' [%s] expired (lifetime %.0fh)", data.typeId, id, def and def.lifetimeHours or 48)
         if def and def.cleanup then
             DE.guard(id .. " cleanup", function()
                 def.cleanup(data.x, data.y, data.z, data.objects)
@@ -203,11 +176,10 @@ end
 
 local function shutdownCleanup()
     DE.log("shutdown cleanup: removing %d active events", DE.EventManager.getActiveCount())
-    local active = DE.EventManager.active
-    for id, data in pairs(active) do
-        local def = DE.EventManager.get(id)
+    for uid, data in pairs(DE.EventManager.active) do
+        local def = DE.EventManager.get(data.typeId)
         if def and def.cleanup then
-            DE.guard(id .. " shutdown cleanup", function()
+            DE.guard(uid .. " shutdown cleanup", function()
                 def.cleanup(data.x, data.y, data.z, data.objects)
             end)
         end

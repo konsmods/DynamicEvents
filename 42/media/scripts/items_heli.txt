@@ -1,0 +1,13 @@
+module Base
+{
+    -- World-placed 3D model item for the helicopter wreck
+    -- Spawned via instanceItem("Base.HelicopterWreck") → AddWorldInventoryItem
+
+    item HelicopterWreck
+    {
+        DisplayCategory = Furniture,
+        ItemType = normal,
+        Weight = 999,
+        WorldStaticModel = HelicopterWreck,
+    }
+}

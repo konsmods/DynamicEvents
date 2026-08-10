@@ -84,7 +84,9 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems)
         local vehicle = addVehicle(vehicleType, x, y, z)
         if not vehicle then return end
 
-        objects[#objects + 1] = { type = "vehicle", ref = vehicle:getId() }
+        local vId = vehicle:getId()
+        DE.dbg("spawned vehicle id=%d at (%d, %d, %d)", vId, x, y, z)
+        objects[#objects + 1] = { type = "vehicle", ref = vId }
 
         local storage = vehicle:getPartById("TruckBed") or vehicle:getPartById("Trunk")
         if storage and storage:getItemContainer() and lootItems then
@@ -120,9 +122,48 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems)
     return objects
 end
 
-function EH.spawnZombies(x, y, z, count, radius)
+function EH.spawnZombies(x, y, z, count, radius, outfit)
     local r = radius or 2
-    addZombiesInOutfitArea(x - r, y - r, x + r, y + r, z, count or 3, nil, nil)
+    addZombiesInOutfitArea(x - r, y - r, x + r, y + r, z, count or 3, outfit, nil)
+end
+
+function EH.playSound(x, y, z, soundName)
+    if not soundName then return end
+    DE.guard("playSound " .. soundName, function()
+        local emitter = getWorld():getFreeEmitter(x, y, z)
+        if emitter then
+            emitter:playSound(soundName)
+            DE.dbg("played sound '%s' at (%d, %d, %d)", soundName, x, y, z)
+        end
+    end)
+end
+
+function EH.spawnFire(x, y, z, count)
+    local c = cell()
+    if not c then return end
+    for i = 1, (count or 1) do
+        local fx, fy = x + DE.rand(-1, 1), y + DE.rand(-1, 1)
+        local sq = squareAt(fx, fy, z)
+        if sq then
+            DE.guard("spawnFire", function()
+                IsoFireManager.StartFire(c, sq, true, 100, 200)
+            end)
+        end
+    end
+end
+
+function EH.spawnSmoke(x, y, z, count)
+    local c = cell()
+    if not c then return end
+    for i = 1, (count or 2) do
+        local sx, sy = x + DE.rand(-1, 1), y + DE.rand(-1, 1)
+        local sq = squareAt(sx, sy, z)
+        if sq then
+            DE.guard("spawnSmoke", function()
+                IsoFireManager.StartSmoke(c, sq, true, 100, 200)
+            end)
+        end
+    end
 end
 
 -- ============================================================================
@@ -148,7 +189,7 @@ local function cleanupOne(objData)
         local v = getVehicleById(objData.ref)
         if v then
             DE.guard("cleanupVehicle", function()
-                v:getScript():setScriptName(nil)
+                v:permanentlyRemove()
             end)
         end
     elseif objData.type == "item" then
@@ -180,6 +221,7 @@ local function cleanupOne(objData)
 end
 
 function EH.cleanupEvent(x, y, z, objects, customFn)
+    DE.dbg("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
     if customFn then
         DE.guard("customCleanup", function()
             customFn(x, y, z, objects)
@@ -187,6 +229,7 @@ function EH.cleanupEvent(x, y, z, objects, customFn)
     end
     if objects then
         for _, objData in ipairs(objects) do
+            DE.dbg("cleanup: type=%s", objData.type)
             cleanupOne(objData)
         end
     end

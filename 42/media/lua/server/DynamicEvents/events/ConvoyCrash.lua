@@ -24,6 +24,7 @@ local EVENT = {
     id             = "convoy_crash",
     name           = "Military Convoy Crash",
     weight         = 12,
+    sound          = "MetaAssaultRifle1",
     cooldownHours  = 36,
     lifetimeHours  = 36,
     minDaysSurvived = 0,
@@ -40,7 +41,6 @@ local EVENT = {
     },
 
     warning = {
-        ambient = { sound = "ExplosionDistant", radius = 200 },
         delay = 60,
     },
 
@@ -57,8 +57,8 @@ local EVENT = {
         -- Ground loot
         EH.merge(objects, EH.spawnLoot(x, y, z, loot, 2, 30))
 
-        -- Zombies
-        EH.spawnZombies(x, y, z, 4, 4)
+        -- Zombies (military outfits)
+        EH.spawnZombies(x, y, z, 4, 4, "Soldier")
 
         DE.log("convoy_crash spawned at (%d, %d, %d)", x, y, z)
         return objects

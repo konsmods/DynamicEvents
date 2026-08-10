@@ -13,6 +13,7 @@ local EVENT = {
     id             = "train_wreck",
     name           = "Train Wreck",
     weight         = 8,
+    sound          = "MetaShotgun1",
     cooldownHours  = 72,
     lifetimeHours  = 60,
     minDaysSurvived = 2,
@@ -27,7 +28,6 @@ local EVENT = {
     },
 
     warning = {
-        ambient = { sound = "MetalScreechDistant", radius = 250 },
         delay = 60,
     },
 
