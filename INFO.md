@@ -10,3 +10,8 @@
 # Content Creation
 - [ ] Sounds for all events
 - [ ] Models for all events
+
+# Event Ideas
+- Using Campers! a camping zone event (people asking for help on radio)
+- Using KI5 military vehicles a military convoy crash / ambush
+- 
