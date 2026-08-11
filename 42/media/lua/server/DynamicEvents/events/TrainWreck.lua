@@ -1,6 +1,8 @@
-DE = DE or {}
-
-local EH = DE.EventHelpers
+-- ============================================================================
+-- Train Wreck — industrial loot along railway tracks.
+-- TODO: train wreck models / sounds
+--   sound = "train_crash" or custom sound when available
+-- ============================================================================
 
 local loot = {
     "Base.Crowbar", "Base.Hammer", "Base.Sledgehammer",
@@ -27,26 +29,14 @@ local EVENT = {
         { name = "Riverside E rail",   x =  8200, y = 5900, z = 0 },
     },
 
-    warning = {
-        delay = 60,
-    },
+    warning = { delay = 60 },
 
-    spawn = function(x, y, z)
-        local objects = {}
+    spawn = function(x, y, z, e)
+        e:SpawnLootScatter(loot, 0, 0, { spread = 3, chance = 35 })
+        e:SpawnLootScatter(loot, 1, 0, { spread = 3, chance = 30 })
+        e:SpawnLootScatter(loot, -1, 0, { spread = 3, chance = 30 })
 
-        -- Industrial loot along the railway
-        EH.merge(objects, EH.spawnLoot(x, y, z, loot, 3, 35))
-        EH.merge(objects, EH.spawnLoot(x + 1, y, z, loot, 3, 30))
-        EH.merge(objects, EH.spawnLoot(x - 1, y, z, loot, 3, 30))
-
-        -- Zombies
-        EH.spawnZombies(x, y, z, 4, 4)
-
-        return objects
-    end,
-
-    cleanup = function(x, y, z, objects)
-        EH.cleanupEvent(x, y, z, objects)
+        e:SpawnZombies(4, nil, 0, 0, { radius = 4 })
     end,
 }
 

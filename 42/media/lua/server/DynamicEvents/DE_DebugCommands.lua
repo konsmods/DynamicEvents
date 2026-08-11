@@ -126,19 +126,28 @@ function DE.CleanupNow()
     if p then p:Say(string.format("[DE] Cleaned up %d expired events", count)) end
 end
 
-function DE.Outfits()
+function DE.Outfits(keyword)
     local p = getSpecificPlayer(0)
+    local kw = keyword and string.lower(keyword)
     DE.log("=== Male outfits ===")
     local male = getAllOutfits(false)
     for i = 0, male:size() - 1 do
-        DE.log("  %s", male:get(i))
+        local name = male:get(i)
+        if not kw or string.find(string.lower(name), kw) then
+            DE.log("  %s", name)
+        end
     end
     DE.log("=== Female outfits ===")
     local female = getAllOutfits(true)
     for i = 0, female:size() - 1 do
-        DE.log("  %s", female:get(i))
+        local name = female:get(i)
+        if not kw or string.find(string.lower(name), kw) then
+            DE.log("  %s", name)
+        end
     end
-    if p then p:Say("[DE] Outfits dumped to console") end
+    local msg = kw and "[DE] Outfits matching '" .. kw .. "' dumped to console"
+                   or "[DE] Outfits dumped to console"
+    if p then p:Say(msg) end
 end
 
 function DE.Clean()

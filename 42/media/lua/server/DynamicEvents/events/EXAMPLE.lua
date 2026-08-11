@@ -81,6 +81,9 @@ local EVENT = {
         -- e:SpawnZombies(count, outfit, dx, dy, opts)
         --   opts: radius (position jitter), spread (zombie scatter radius, default 3)
         --
+        -- Use .Outfits() in the console to list all available outfit names.
+        -- Use .Outfits("army") to filter by keyword.
+        --
         e:SpawnZombies(4, "ArmyCamoGreen", 0, 0, { radius = 3 })
 
         -- --- Single items ----------------------------------------------------
