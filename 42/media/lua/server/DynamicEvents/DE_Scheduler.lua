@@ -17,6 +17,7 @@ local function refreshConfig()
     DE.Config.eventChance          = getSandboxOption("EventChance", 50)
     DE.Config.gracePeriodHours     = getSandboxOption("GracePeriodHours", 1.0)
     DE.Config.eventCleanup         = getSandboxOption("EventCleanup", true)
+    DE.Config.minDistanceBetweenEvents = getSandboxOption("MinDistanceBetweenEvents", 20)
     DE.Config.debug                = getSandboxOption("Debug", false)
 end
 
@@ -27,16 +28,20 @@ local function isEventEnabled(id)
     return toggles[id] ~= false
 end
 
-local function doSpawn(def, x, y, z)
+local function doSpawn(def, x, y, z, rot)
     DE.log("%s appeared at (%d, %d, %d)", def.name or def.id, x, y, z)
     DE.EventHelpers.playSound(x, y, z, def.sound)
 
-    local ok, objects = pcall(def.spawn, x, y, z)
+    local ctx = DE.EventContext.new(x, y, z, rot or def.rot or 0)
+    local ok, result = pcall(def.spawn, x, y, z, ctx)
     if not ok then
-        DE.err("%s spawn failed: %s", def.id, tostring(objects))
-        objects = {}
+        DE.err("%s spawn failed: %s", def.id, tostring(result))
+        return ctx:objects()
     end
-    objects = objects or {}
+    local objects = ctx:objects()
+    if result and type(result) == "table" and result ~= objects then
+        DE.EventHelpers.merge(objects, result)
+    end
     DE.dbg("%s spawn returned %d tracked objects", def.id, #objects)
     return objects
 end
@@ -48,7 +53,7 @@ local function processPendingSpawns()
     local toRemove = {}
     for i, pending in ipairs(DE._pendingSpawns) do
         if now >= pending.atTime then
-            local objects = doSpawn(pending.def, pending.x, pending.y, pending.z)
+            local objects = doSpawn(pending.def, pending.x, pending.y, pending.z, pending.rot)
             DE.EventManager.addActive(pending.def.id, pending.x, pending.y, pending.z, objects)
             toRemove[i] = true
         end
@@ -62,9 +67,9 @@ local function processPendingSpawns()
     DE._pendingSpawns = filtered
 end
 
-local function scheduleSpawn(def, x, y, z, delay)
+local function scheduleSpawn(def, x, y, z, delay, rot)
     if not delay or delay <= 0 then
-        local objects = doSpawn(def, x, y, z)
+        local objects = doSpawn(def, x, y, z, rot)
         DE.EventManager.addActive(def.id, x, y, z, objects)
         return
     end
@@ -73,6 +78,7 @@ local function scheduleSpawn(def, x, y, z, delay)
     DE._pendingSpawns[#DE._pendingSpawns + 1] = {
         def = def,
         x = x, y = y, z = z,
+        rot = rot,
         atTime = atTime,
     }
     DE.dbg("scheduled spawn for '%s' in %d seconds (at hour %.2f)", def.id, delay, atTime)
@@ -131,17 +137,23 @@ local function tryFireEvent()
 
         local location = DE.EventManager.pickRandomLocation(def, skipUsed)
         if location then
-            DE.log("firing event '%s' at (%d, %d, %d)", def.id, location.x, location.y, location.z or 0)
-            DE.EventManager.markLocationUsed(def.id, location)
+            local lz = location.z or 0
+            if DE.EventManager.isLocationOccupied(location.x, location.y, lz) then
+                DE.dbg("'%s' location '%s' too close to an active event, skipping", def.id, location.name)
+            else
+                DE.log("firing event '%s' at (%d, %d, %d)", def.id, location.x, location.y, lz)
+                DE.EventManager.markLocationUsed(def.id, location)
 
-            local delay = 0
-            if def.warning and def.warning.delay then
-                delay = def.warning.delay
+                local delay = 0
+                if def.warning and def.warning.delay then
+                    delay = def.warning.delay
+                end
+
+                scheduleSpawn(def, location.x, location.y, lz, delay,
+                    location.rot or def.rot or 0)
+                DE.EventManager.startCooldown(def.id, def.cooldownHours)
+                return
             end
-
-            scheduleSpawn(def, location.x, location.y, location.z or 0, delay)
-            DE.EventManager.startCooldown(def.id, def.cooldownHours)
-            return
         elseif skipUsed then
             DE.dbg("'%s' has no unused locations, skipping", def.id)
         else

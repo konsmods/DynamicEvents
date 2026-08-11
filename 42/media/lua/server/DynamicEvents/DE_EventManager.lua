@@ -28,6 +28,8 @@ function EM.register(def)
     def.minDaysSurvived = def.minDaysSurvived or 0
     def.weight = def.weight or 10
     def.dependencies = def.dependencies or {}
+    def.rot = def.rot or 0
+    def.cleanup = def.cleanup or DE.EventHelpers.cleanupEvent
 
     EM.types[def.id] = def
     if not EM.order[def.id] then
@@ -99,6 +101,18 @@ function EM.getActiveCount()
     local count = 0
     for _ in pairs(EM.active) do count = count + 1 end
     return count
+end
+
+function EM.isLocationOccupied(x, y, z)
+    local radius = DE.Config.minDistanceBetweenEvents or 20
+    for _, data in pairs(EM.active) do
+        local dx = data.x - x
+        local dy = data.y - y
+        if math.sqrt(dx * dx + dy * dy) <= radius then
+            return true
+        end
+    end
+    return false
 end
 
 function EM.addActive(typeId, x, y, z, objects)

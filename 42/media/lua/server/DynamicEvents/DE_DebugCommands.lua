@@ -9,7 +9,7 @@ local function announceCoords(def, x, y, z)
     if p then p:Say(msg) end
 end
 
-function DE.Spawn(eventId, x, y, z)
+function DE.Spawn(eventId, x, y, z, rot)
     local def = DE.EventManager.get(eventId)
     if not def then
         DE.log("Unknown event: %s", eventId)
@@ -30,12 +30,16 @@ function DE.Spawn(eventId, x, y, z)
     announceCoords(def, sx, sy, sz)
     DE.EventHelpers.playSound(sx, sy, sz, def.sound)
 
-    local ok, objects = pcall(def.spawn, sx, sy, sz)
+    local ctx = DE.EventContext.new(sx, sy, sz, rot or def.rot or 0)
+    local ok, result = pcall(def.spawn, sx, sy, sz, ctx)
     if not ok then
-        DE.err("%s spawn failed: %s", def.id, tostring(objects))
-        objects = {}
+        DE.err("%s spawn failed: %s", def.id, tostring(result))
+        result = ctx:objects()
     end
-    objects = objects or {}
+    local objects = ctx:objects()
+    if result and type(result) == "table" and result ~= objects then
+        DE.EventHelpers.merge(objects, result)
+    end
     DE.dbg("%s debug spawn returned %d tracked objects", def.id, #objects)
     DE.EventManager.addActive(def.id, sx, sy, sz, objects)
 end

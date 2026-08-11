@@ -248,3 +248,96 @@ function EH.cleanupEvent(x, y, z, objects)
 end
 
 DE.EventHelpers = EH
+
+-- ============================================================================
+-- Event context — the `e` object passed to spawn functions.
+-- ============================================================================
+
+local EventContext = {}
+EventContext.__index = EventContext
+
+function EventContext.new(x, y, z, rot)
+    return setmetatable({
+        _objects = {},
+        x = x, y = y, z = z,
+        rot = rot or 0,
+    }, EventContext)
+end
+
+function EventContext:objects()
+    return self._objects
+end
+
+function EventContext:_worldPos(dx, dy, radius)
+    if radius then
+        dx = dx + DE.rand(-radius, radius)
+        dy = dy + DE.rand(-radius, radius)
+    end
+    local rad = math.rad(self.rot)
+    local cosA = math.cos(rad)
+    local sinA = math.sin(rad)
+    return self.x + math.floor(dx * cosA - dy * sinA + 0.5),
+           self.y + math.floor(dx * sinA + dy * cosA + 0.5)
+end
+
+function EventContext:SpawnVehicle(vehicleType, dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local spawned = EH.spawnVehicle(wx, wy, self.z, vehicleType,
+        opts.loot, opts.rot, opts.skin)
+    EH.merge(self._objects, spawned)
+end
+
+function EventContext:SpawnZombies(count, outfit, dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local spread = opts.spread or 3
+    EH.spawnZombies(wx, wy, self.z, count, spread, outfit)
+end
+
+function EventContext:SpawnItem(itemType, dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local sq = squareAt(wx, wy, self.z)
+    if sq then
+        local item = instanceItem(itemType)
+        if item then
+            sq:AddWorldInventoryItem(item, 0.3, 0.3, 0)
+            self._objects[#self._objects + 1] = {
+                type = "item",
+                sqx = wx, sqy = wy, sqz = self.z,
+                itemType = itemType,
+            }
+        end
+    end
+end
+
+function EventContext:SpawnLootScatter(items, dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local radius = opts.spread or 2
+    local chance = opts.chance or 30
+    EH.merge(self._objects,
+        EH.spawnLoot(wx, wy, self.z, items, radius, chance))
+end
+
+function EventContext:SpawnFire(count, dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    EH.spawnFire(wx, wy, self.z, count)
+end
+
+function EventContext:SpawnSmoke(count, dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    EH.spawnSmoke(wx, wy, self.z, count)
+end
+
+function EventContext:SpawnScorch(dx, dy, opts)
+    opts = opts or {}
+    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    EH.merge(self._objects,
+        EH.spawnScorchMarks(wx, wy, self.z, opts.spread or 1))
+end
+
+DE.EventContext = EventContext
