@@ -1,0 +1,61 @@
+DE = DE or {}
+
+local function ensureChannel()
+    if DE._radioChannel then return end
+    local ok, radio = pcall(getZomboidRadio)
+    if not ok or not radio then return end
+    DE._radioChannel = 105600
+    radio:addChannelName("[DE] Emergency Broadcast", DE._radioChannel, "Emergency", true)
+    DE.log("radio channel %d registered", DE._radioChannel)
+end
+
+local function broadcast(def, data, locName)
+    if not DE._radioChannel then return end
+    local ok, radio = pcall(getZomboidRadio)
+    if not ok or not radio then return end
+
+    local msg = DE.pick(def.radio.messages)
+    local location = locName and (locName .. " (" .. data.x .. ", " .. data.y .. ")")
+                             or ("(" .. data.x .. ", " .. data.y .. ")")
+    local text = string.gsub(msg, "%%s", location)
+
+    local range = def.radio.range or 200
+    local ok, err = pcall(radio.SendTransmission, radio,
+        data.x, data.y, DE._radioChannel,
+        text, "", "", 1.0, 0.2, 0.2, range, false)
+    if not ok then
+        DE.warn("radio broadcast failed: %s", err)
+    else
+        DE.dbg("radio broadcast on ch %d: %s", DE._radioChannel, text)
+    end
+end
+
+function DE.broadcastRadios()
+    ensureChannel()
+    if not DE._radioChannel then return end
+
+    local now = DE.gameHours() * 3600
+
+    for uid, data in pairs(DE.EventManager.active) do
+        local def = DE.EventManager.get(data.typeId)
+        if not def or not def.radio then
+            -- skip events without radio config
+        else
+            data._lastRadioBroadcast = data._lastRadioBroadcast or 0
+            local interval = def.radio.interval or 7200
+            if now - data._lastRadioBroadcast >= interval then
+                local locName = "unknown"
+                if def.locations then
+                    for _, loc in ipairs(def.locations) do
+                        if loc.x == data.x and loc.y == data.y then
+                            locName = loc.name
+                            break
+                        end
+                    end
+                end
+                broadcast(def, data, locName)
+                data._lastRadioBroadcast = now
+            end
+        end
+    end
+end

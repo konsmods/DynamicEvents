@@ -32,6 +32,16 @@ local EVENT = {
         delay = 90,
     },
 
+    radio = {
+        interval = 30,
+        range    = 200,
+        messages = {
+            "MAYDAY! Military convoy under fire near %s! Requesting immediate backup!",
+            "Emergency! Convoy ambushed at %s — heavy casualties!",
+            "This is an emergency broadcast from %s! Convoy is down, repeat, convoy is down!",
+        },
+    },
+
     spawn = function(x, y, z, e)
         local spacing = 8
         local n = 4

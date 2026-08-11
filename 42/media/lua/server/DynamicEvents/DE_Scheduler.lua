@@ -193,9 +193,11 @@ local function onTick()
     expireActiveEvents()
     DE.EventManager.saveState()
     ticksSinceLastCheck = ticksSinceLastCheck + 1
-    if ticksSinceLastCheck < CHECK_INTERVAL_TICKS then return end
-    ticksSinceLastCheck = 0
-    tryFireEvent()
+    if ticksSinceLastCheck >= CHECK_INTERVAL_TICKS then
+        ticksSinceLastCheck = 0
+        tryFireEvent()
+    end
+    DE.broadcastRadios()
 end
 
 Events.OnGameStart.Add(function()

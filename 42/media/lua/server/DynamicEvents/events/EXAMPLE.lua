@@ -30,6 +30,20 @@ local EVENT = {
     -- Optional: delay before the event spawns (warning period)
     -- warning = { delay = 60 },
 
+    -- Optional: radio broadcasts sent periodically from the event location.
+    -- Players with radios tuned to the emergency frequency will hear them.
+    -- %s is replaced with the location name and coordinates.
+    -- interval defaults to 7200 seconds (2 in-game hours).
+    -- range defaults to 200 tiles.
+    -- radio = {
+    --     interval = 7200,
+    --     range    = 200,
+    --     messages = {
+    --         "MAYDAY! Convoy under fire near %s!",
+    --         "Emergency broadcast from %s — requesting immediate support!",
+    --     },
+    -- },
+
     -- =========================================================================
     -- Locations: where this event can spawn.
     -- Each can have its own rot to match road/terrain orientation.
