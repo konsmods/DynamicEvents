@@ -10,8 +10,9 @@ SandboxVars.DynamicEvents = {
     Debug                = false,
 
     EventToggles = {
-        heli_crash   = true,
-        train_wreck  = true,
-        convoy_crash = true,
+        heli_crash       = true,
+        train_wreck      = true,
+        convoy_crash     = true,
+        convoy_crash_ki5 = true,
     },
 }

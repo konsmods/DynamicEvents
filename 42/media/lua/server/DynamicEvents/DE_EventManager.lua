@@ -27,6 +27,7 @@ function EM.register(def)
     def.cooldownHours = def.cooldownHours or 24
     def.minDaysSurvived = def.minDaysSurvived or 0
     def.weight = def.weight or 10
+    def.dependencies = def.dependencies or {}
 
     EM.types[def.id] = def
     if not EM.order[def.id] then
@@ -66,13 +67,27 @@ function EM.startCooldown(id, hours)
     DE.dbg("cooldown for '%s' until hour %.1f", id, EM.cooldowns[id])
 end
 
+function EM.dependenciesMet(def)
+    if not def.dependencies or #def.dependencies == 0 then return true end
+    local activeMods = getActivatedMods()
+    for _, modId in ipairs(def.dependencies) do
+        if not activeMods:contains(modId) then
+            DE.dbg("event '%s' skipped: required mod '%s' not active", def.id, modId)
+            return false
+        end
+    end
+    return true
+end
+
 function EM.getEligible()
     local now = DE.gameHours()
     local daysSurvived = DE.gameDays()
     local eligible = {}
 
     for _, def in ipairs(EM.all()) do
-        if not EM.isOnCooldown(def.id) and daysSurvived >= (def.minDaysSurvived or 0) then
+        if not EM.isOnCooldown(def.id)
+            and daysSurvived >= (def.minDaysSurvived or 0)
+            and EM.dependenciesMet(def) then
             eligible[#eligible + 1] = def
         end
     end
@@ -159,6 +174,7 @@ function EM.saveState()
             typeId = ev.typeId,
             x = ev.x, y = ev.y, z = ev.z,
             spawnedAt = ev.spawnedAt,
+            objects = ev.objects or {},
         }
     end
     data.cooldowns = {}
@@ -189,8 +205,12 @@ function EM.loadState()
                 typeId = ev.typeId,
                 x = ev.x, y = ev.y, z = ev.z,
                 spawnedAt = ev.spawnedAt,
-                objects = {},  -- objects can't survive serialization
+                objects = ev.objects or {},
             }
+            local objCount = ev.objects and #ev.objects or 0
+            if objCount > 0 then
+                DE.log("restored '%s' with %d tracked objects", uid, objCount)
+            end
         end
     end
     if data.cooldowns then

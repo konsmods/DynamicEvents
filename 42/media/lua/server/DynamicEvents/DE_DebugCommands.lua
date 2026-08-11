@@ -122,6 +122,10 @@ function DE.CleanupNow()
     if p then p:Say(string.format("[DE] Cleaned up %d expired events", count)) end
 end
 
+function DE.Clean()
+    DE.CleanupAll()
+end
+
 function DE.CleanupAll()
     local ids = {}
     for id in pairs(DE.EventManager.active) do
@@ -184,4 +188,4 @@ function DE.Info()
     if p then p:Say("[DE] Full mod info dumped to console") end
 end
 
-DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.CleanupNow, DE.CleanupAll, DE.ToggleCleanup, DE.Info")
+DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.Clean, DE.CleanupNow, DE.ToggleCleanup, DE.Info")
