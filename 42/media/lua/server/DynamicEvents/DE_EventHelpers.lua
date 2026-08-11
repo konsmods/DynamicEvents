@@ -75,7 +75,7 @@ function EH.spawnScorchMarks(x, y, z, radius)
     return objects
 end
 
-function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction)
+function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
     local objects = {}
     local sq = squareAt(x, y, z)
     if not sq then return objects end
@@ -88,6 +88,11 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction)
             vehicle:setAngles(0, direction, 0)
         end
 
+        if skinIndex then
+            vehicle:setSkinIndex(skinIndex)
+            vehicle:updateSkin()
+        end
+
         local vId = 0
         local ok, result = pcall(vehicle.getId, vehicle)
         if ok then
@@ -95,7 +100,7 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction)
         else
             DE.warn("vehicle:getId() failed for %s, cleanup may not work", vehicleType)
         end
-        DE.log("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
+        DE.dbg("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
         objects[#objects + 1] = { type = "vehicle", ref = vId, x = x, y = y, z = z }
 
         local storage = vehicle:getPartById("TruckBed") or vehicle:getPartById("Trunk")
@@ -134,24 +139,7 @@ end
 
 function EH.spawnZombies(x, y, z, count, radius, outfit)
     local r = radius or 2
-    for i = 1, (count or 3) do
-        local zx = x + ZombRand(r * 2 + 1) - r
-        local zy = y + ZombRand(r * 2 + 1) - r
-        local sq = squareAt(zx, zy, z)
-        if sq then
-            DE.guard("spawnZombies", function()
-                local zombies = addZombiesInOutfit(zx, zy, z, 1, outfit, nil)
-                if zombies then
-                    for j = 0, zombies:size() - 1 do
-                        local zombie = zombies:get(j)
-                        if zombie and outfit then
-                            zombie:dressInNamedOutfit(outfit)
-                        end
-                    end
-                end
-            end)
-        end
-    end
+    addZombiesInOutfitArea(x - r, y - r, x + r, y + r, z, count or 3, outfit, nil)
 end
 
 function EH.playSound(x, y, z, soundName)
@@ -215,7 +203,6 @@ local function cleanupOne(objData)
     if objData.type == "vehicle" then
         local v = getVehicleById(objData.ref)
         if v then
-            DE.log("cleanup: removing vehicle %d at (%d,%d)", objData.ref, objData.x, objData.y)
             DE.guard("cleanupVehicle", function()
                 v:permanentlyRemove()
                 v:removeFromWorld()
@@ -252,10 +239,9 @@ local function cleanupOne(objData)
 end
 
 function EH.cleanupEvent(x, y, z, objects)
-    DE.log("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
+    DE.dbg("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
     if objects then
         for _, objData in ipairs(objects) do
-            DE.log("cleanup: type=%s ref=%s", objData.type, tostring(objData.ref))
             cleanupOne(objData)
         end
     end

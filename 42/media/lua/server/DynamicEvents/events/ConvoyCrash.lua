@@ -58,7 +58,7 @@ local EVENT = {
         EH.merge(objects, EH.spawnLoot(x, y, z, loot, 2, 30))
 
         -- Zombies (military outfits)
-        EH.spawnZombies(x, y, z, 4, 4, "Soldier")
+        EH.spawnZombies(x, y, z, 4, 4, "ArmyCamoGreen")
 
         return objects
     end,

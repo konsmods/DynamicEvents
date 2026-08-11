@@ -207,10 +207,6 @@ function EM.loadState()
                 spawnedAt = ev.spawnedAt,
                 objects = ev.objects or {},
             }
-            local objCount = ev.objects and #ev.objects or 0
-            if objCount > 0 then
-                DE.log("restored '%s' with %d tracked objects", uid, objCount)
-            end
         end
     end
     if data.cooldowns then
