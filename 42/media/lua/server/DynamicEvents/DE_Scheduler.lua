@@ -15,7 +15,7 @@ local function refreshConfig()
     DE.Config.maxActive            = getSandboxOption("MaxActiveEvents", 3)
     DE.Config.minTimeBetweenEvents = getSandboxOption("MinHoursBetweenEvents", 1.0)
     DE.Config.eventChance          = getSandboxOption("EventChance", 50)
-    DE.Config.gracePeriodHours     = getSandboxOption("GracePeriodHours", 1.0)
+    DE.Config.gracePeriodHours     = getSandboxOption("GracePeriodHours", 0)
     DE.Config.eventCleanup         = getSandboxOption("EventCleanup", true)
     DE.Config.minDistanceBetweenEvents = getSandboxOption("MinDistanceBetweenEvents", 20)
     DE.Config.debug                = getSandboxOption("Debug", false)
@@ -90,7 +90,7 @@ local function tryFireEvent()
     if not DE.Config.enabled then return end
 
     if not DE.EventManager._wasRestored then
-        if gameStartHour and DE.gameHours() - gameStartHour < (DE.Config.gracePeriodHours or 1) then
+        if gameStartHour and DE.gameHours() - gameStartHour < (DE.Config.gracePeriodHours or 0) then
             return
         end
     end
@@ -204,10 +204,9 @@ Events.OnGameStart.Add(function()
     gameStartHour = DE.gameHours()
     local restored = DE.EventManager.loadState()
     if restored then
-        DE.log("scheduler started (restored from save, %d active events)",
-            DE.EventManager.getActiveCount())
+        DE.log("scheduler started (restored %d active events)", DE.EventManager.getActiveCount())
     else
-        DE.log("scheduler started (fresh, grace period: %.1fh)", DE.Config.gracePeriodHours or 1)
+        DE.log("scheduler started (fresh)")
     end
     Events.OnTick.Add(onTick)
 end)

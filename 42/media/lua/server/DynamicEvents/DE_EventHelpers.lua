@@ -50,7 +50,7 @@ function EH.spawnSprite(x, y, z, spriteName)
     DE.guard("spawnSprite " .. spriteName, function()
         local obj = IsoObject.new(sq, spriteName, "", false)
         if obj then
-            sq:AddTileObject(obj)
+            sq:FileObject(obj)
             objects[#objects + 1] = {
                 type = "sprite",
                 sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
@@ -98,9 +98,9 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
         if ok then
             vId = result
         else
-            DE.warn("vehicle:getId() failed for %s, cleanup may not work", vehicleType)
+            DE.warn("vehicle:getId() failed for %s", vehicleType)
         end
-        DE.dbg("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
+        DE.log("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
         objects[#objects + 1] = { type = "vehicle", ref = vId, x = x, y = y, z = z }
 
         local storage = vehicle:getPartById("TruckBed") or vehicle:getPartById("Trunk")
@@ -200,17 +200,7 @@ local function cleanupOne(objData)
     local c = cell()
     if not c then return end
 
-    if objData.type == "vehicle" then
-        local v = getVehicleById(objData.ref)
-        if v then
-            DE.guard("cleanupVehicle", function()
-                v:permanentlyRemove()
-                v:removeFromWorld()
-            end)
-        else
-            DE.warn("cleanup: vehicle %d not found", objData.ref)
-        end
-    elseif objData.type == "item" then
+    if objData.type == "item" then
         local sq = c:getGridSquare(objData.sqx, objData.sqy, objData.sqz)
         if sq then
             for i = sq:getObjects():size() - 1, 0, -1 do
@@ -239,9 +229,37 @@ local function cleanupOne(objData)
 end
 
 function EH.cleanupEvent(x, y, z, objects)
-    DE.dbg("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
-    if objects then
-        for _, objData in ipairs(objects) do
+    DE.log("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
+    if not objects then return end
+
+    -- Collect all vehicles first, then remove — prevents ID map corruption.
+    local vehicles = {}
+    for _, objData in ipairs(objects) do
+        if objData.type == "vehicle" and objData.ref and objData.ref > 0 then
+            local v = getVehicleById(objData.ref)
+            if v then
+                vehicles[#vehicles + 1] = v
+                DE.log("  vehicle id=%d captured", objData.ref)
+            else
+                DE.warn("  vehicle id=%d NOT FOUND", objData.ref)
+            end
+        end
+    end
+
+    for _, v in ipairs(vehicles) do
+        if isClient() then
+            local player = getSpecificPlayer(0)
+            if player then
+                sendClientCommand(player, "vehicle", "remove", { vehicle = v:getId() })
+            end
+        else
+            DE.guard("cleanupVehicle world", function() v:removeFromWorld() end)
+            DE.guard("cleanupVehicle perm", function() v:permanentlyRemove() end)
+        end
+    end
+
+    for _, objData in ipairs(objects) do
+        if objData.type ~= "vehicle" then
             cleanupOne(objData)
         end
     end

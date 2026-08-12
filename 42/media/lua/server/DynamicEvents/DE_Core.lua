@@ -7,7 +7,7 @@ DE.Config = {
     maxActive            = 3,
     minTimeBetweenEvents = 1.0,   -- in-game hours
     eventChance          = 50,    -- percent chance per scheduler tick
-    gracePeriodHours     = 1.0,   -- hours after game start before first event
+    gracePeriodHours     = 0,   -- hours after game start before first event
     eventCleanup         = true,  -- false = locations are one-use, events never expire
     minDistanceBetweenEvents = 20, -- tiles between event centers
     debug                = false,

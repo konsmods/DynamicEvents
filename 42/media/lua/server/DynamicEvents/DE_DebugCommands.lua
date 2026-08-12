@@ -80,6 +80,44 @@ function DE.ListEvents()
     if p then p:Say(msg) end
 end
 
+function DE.VehicleInfo()
+    local p = getSpecificPlayer(0)
+    if not p then DE.log("No player"); return end
+    local sq = p:getSquare()
+    if not sq then DE.log("No square"); return end
+
+    local ok, msg = pcall(function()
+        local vehicles = sq:getVehicles()
+        if not vehicles then
+            p:Say("[DE] getVehicles returned nil")
+            return
+        end
+        local n = vehicles:size()
+        if n == 0 then
+            p:Say("[DE] No vehicle on your square")
+            return
+        end
+        for i = 0, n - 1 do
+            local v = vehicles:get(i)
+            if v then
+                local id = 0
+                pcall(function() id = v:getId() end)
+                local md = nil
+                pcall(function() md = v:getModData().de_key end)
+                local script = nil
+                pcall(function() script = v:getScriptName() end)
+                local txt = string.format("[DE] id=%d key=%s script=%s", id, tostring(md), script or "?")
+                DE.log(txt)
+                p:Say(txt)
+            end
+        end
+    end)
+    if not ok then
+        DE.warn("VehicleInfo failed: %s", tostring(msg))
+        p:Say("[DE] VehicleInfo error — check console")
+    end
+end
+
 function DE.WhereAmI()
     local p = getSpecificPlayer(0)
     if not p then DE.log("No player"); return end
@@ -102,28 +140,26 @@ function DE.CleanupNow()
         local def = DE.EventManager.get(data.typeId)
         local lifetime = (def and def.lifetimeHours) or 48
         if now - data.spawnedAt >= lifetime then
-            toExpire[id] = { data = data, def = def, lifetime = lifetime }
+            toExpire[#toExpire + 1] = { id = id, data = data, def = def, lifetime = lifetime }
         end
     end
 
-    for id, info in pairs(toExpire) do
+    for _, info in ipairs(toExpire) do
         DE.log("Expiring '%s' (lifetime %.0fh, spawned %.1fh ago)",
-            id, info.lifetime, now - info.data.spawnedAt)
+            info.id, info.lifetime, now - info.data.spawnedAt)
         if info.def and info.def.cleanup then
-            DE.guard(id .. " cleanup", function()
+            DE.guard(info.id .. " cleanup", function()
                 info.def.cleanup(info.data.x, info.data.y, info.data.z, info.data.objects)
             end)
         end
-        DE.EventManager.removeActive(id)
+        DE.EventManager.removeActive(info.id)
     end
 
     local p = getSpecificPlayer(0)
-    local count = 0
-    for _ in pairs(toExpire) do count = count + 1 end
-    if count == 0 then
+    if #toExpire == 0 then
         DE.log("No events ready for expiry")
     end
-    if p then p:Say(string.format("[DE] Cleaned up %d expired events", count)) end
+    if p then p:Say(string.format("[DE] Cleaned up %d expired events", #toExpire)) end
 end
 
 function DE.Outfits(keyword)
@@ -151,10 +187,6 @@ function DE.Outfits(keyword)
 end
 
 function DE.Clean()
-    DE.CleanupAll()
-end
-
-function DE.CleanupAll()
     local ids = {}
     for id in pairs(DE.EventManager.active) do
         table.insert(ids, id)
@@ -216,4 +248,4 @@ function DE.Info()
     if p then p:Say("[DE] Full mod info dumped to console") end
 end
 
-DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.Clean, DE.CleanupNow, DE.Outfits, DE.ToggleCleanup, DE.Info")
+DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.VehicleInfo, DE.Clean, DE.CleanupNow, DE.Outfits, DE.ToggleCleanup, DE.Info")

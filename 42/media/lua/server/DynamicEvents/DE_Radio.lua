@@ -20,10 +20,10 @@ local function broadcast(def, data, locName)
     local text = string.gsub(msg, "%%s", location)
 
     local range = def.radio.range or 200
-    local ok, err = pcall(radio.SendTransmission, radio,
+    local bcastOk, err = pcall(radio.SendTransmission, radio,
         data.x, data.y, DE._radioChannel,
         text, "", "", 1.0, 0.2, 0.2, range, false)
-    if not ok then
+    if not bcastOk then
         DE.warn("radio broadcast failed: %s", err)
     else
         DE.dbg("radio broadcast on ch %d: %s", DE._radioChannel, text)
@@ -38,9 +38,7 @@ function DE.broadcastRadios()
 
     for uid, data in pairs(DE.EventManager.active) do
         local def = DE.EventManager.get(data.typeId)
-        if not def or not def.radio then
-            -- skip events without radio config
-        else
+        if def and def.radio then
             data._lastRadioBroadcast = data._lastRadioBroadcast or 0
             local interval = def.radio.interval or 7200
             if now - data._lastRadioBroadcast >= interval then
