@@ -1,10 +1,10 @@
 DE = DE or {}
 
 local vehicleTypes = {
-    "Base.82oshkoshM911Burnt",
+    "Base.67commandoBurnt",
     "Base.86oshkoshP19ABurnt",
     "Base.82oshkoshM911Burnt",
-    "Base.86oshkoshP19ABurnt",
+    "Base.92amgeneralM998Burnt",
 }
 
 local cargoLoot = {
@@ -21,7 +21,7 @@ local EVENT = {
     lifetimeHours  = 42,
     minDaysSurvived = 1,
 
-    dependencies = { "82oshkoshM911", "86oshkoshP19A" },
+    dependencies = { "82oshkoshM911", "86oshkoshP19A", "92amgeneralM998Burnt", "67commandoBurnt" },
 
     locations       = {
         { name = "Muldraugh highway",   x = 10715, y = 9834,  z = 0, rot = 0 },
