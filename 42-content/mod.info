@@ -1,0 +1,6 @@
+name=Dynamic Events Content
+id=DynamicEventsContent
+description=Event definitions for Dynamic Events. Requires the DynamicEvents framework.
+require=DynamicEvents
+versionMin=42.15
+modversion=0.1.0

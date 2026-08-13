@@ -200,6 +200,11 @@ local function onTick()
     DE.broadcastRadios()
 end
 
+-- Register the tick loop immediately, not inside OnGameStart.
+-- On dedicated servers, OnGameStart can fire before mod files are loaded,
+-- so deferring registration there would never run the scheduler.
+Events.OnTick.Add(onTick)
+
 Events.OnGameStart.Add(function()
     gameStartHour = DE.gameHours()
     local restored = DE.EventManager.loadState()
@@ -208,5 +213,4 @@ Events.OnGameStart.Add(function()
     else
         DE.log("scheduler started (fresh)")
     end
-    Events.OnTick.Add(onTick)
 end)

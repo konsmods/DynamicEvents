@@ -2,14 +2,25 @@ if isClient() then return end
 
 DE = DE or {}
 
-local function announceCoords(def, x, y, z)
+-- Helper: get player from arg or fall back to getSpecificPlayer(0)
+local function getPlayer(override)
+    return override or getSpecificPlayer(0)
+end
+
+local function announceCoords(def, x, y, z, player)
     local msg = string.format("Spawned %s at (%d, %d, %d)", def.name or def.id, x, y, z)
     DE.log(msg)
-    local p = getSpecificPlayer(0)
+    local p = getPlayer(player)
     if p then p:Say(msg) end
 end
 
-function DE.Spawn(eventId, x, y, z, rot)
+-- ============================================================================
+-- Debug commands. Each accepts an optional `player` arg so they can be called
+-- by OnClientCommand with the requesting admin's player object.
+-- In SP / direct server console, player is nil and getSpecificPlayer(0) is used.
+-- ============================================================================
+
+function DE.Spawn(eventId, x, y, z, rot, player)
     local def = DE.EventManager.get(eventId)
     if not def then
         DE.log("Unknown event: %s", eventId)
@@ -17,7 +28,7 @@ function DE.Spawn(eventId, x, y, z, rot)
     end
 
     if not x then
-        local p = getSpecificPlayer(0)
+        local p = getPlayer(player)
         if p then
             x, y, z = p:getX(), p:getY(), p:getZ()
         else
@@ -27,7 +38,7 @@ function DE.Spawn(eventId, x, y, z, rot)
     end
     local sx, sy, sz = x, y or 0, z or 0
 
-    announceCoords(def, sx, sy, sz)
+    announceCoords(def, sx, sy, sz, player)
     DE.EventHelpers.playSound(sx, sy, sz, def.sound)
 
     local ctx = DE.EventContext.new(sx, sy, sz, rot or def.rot or 0)
@@ -44,27 +55,26 @@ function DE.Spawn(eventId, x, y, z, rot)
     DE.EventManager.addActive(def.id, sx, sy, sz, objects)
 end
 
-function DE.SpawnHere(eventId)
+function DE.SpawnHere(eventId, player)
     local def = DE.EventManager.get(eventId)
     if not def then
         DE.log("Unknown event: %s", eventId)
         return
     end
-    local p = getSpecificPlayer(0)
+    local p = getPlayer(player)
     if not p then DE.log("No player found"); return end
-    local px, py, pz = p:getX(), p:getY(), p:getZ()
-    DE.Spawn(eventId, px, py, pz)
+    DE.Spawn(eventId, p:getX(), p:getY(), p:getZ(), nil, player)
 end
 
-function DE.SpawnRandom()
+function DE.SpawnRandom(player)
     local all = DE.EventManager.all()
     if #all == 0 then DE.log("No events registered"); return end
     local def = all[DE.rand(1, #all)]
-    DE.Spawn(def.id)
+    DE.Spawn(def.id, nil, nil, nil, nil, player)
 end
 
-function DE.ListEvents()
-    local p = getSpecificPlayer(0)
+function DE.ListEvents(player)
+    local p = getPlayer(player)
     local active = DE.EventManager.getActiveEvents()
     local msg
     if #active == 0 then
@@ -80,8 +90,8 @@ function DE.ListEvents()
     if p then p:Say(msg) end
 end
 
-function DE.VehicleInfo()
-    local p = getSpecificPlayer(0)
+function DE.VehicleInfo(player)
+    local p = getPlayer(player)
     if not p then DE.log("No player"); return end
     local sq = p:getSquare()
     if not sq then DE.log("No square"); return end
@@ -118,18 +128,18 @@ function DE.VehicleInfo()
     end
 end
 
-function DE.WhereAmI()
-    local p = getSpecificPlayer(0)
+function DE.WhereAmI(player)
+    local p = getPlayer(player)
     if not p then DE.log("No player"); return end
     local msg = string.format("You are at (%d, %d, %d)", p:getX(), p:getY(), p:getZ())
     DE.log(msg)
     p:Say(msg)
 end
 
-function DE.CleanupNow()
+function DE.CleanupNow(player)
+    local p = getPlayer(player)
     if not DE.Config.eventCleanup then
         DE.log("eventCleanup is disabled, nothing to expire")
-        local p = getSpecificPlayer(0)
         if p then p:Say("[DE] Cleanup is OFF (EventCleanup=false)") end
         return
     end
@@ -155,15 +165,14 @@ function DE.CleanupNow()
         DE.EventManager.removeActive(info.id)
     end
 
-    local p = getSpecificPlayer(0)
     if #toExpire == 0 then
         DE.log("No events ready for expiry")
     end
     if p then p:Say(string.format("[DE] Cleaned up %d expired events", #toExpire)) end
 end
 
-function DE.Outfits(keyword)
-    local p = getSpecificPlayer(0)
+function DE.Outfits(keyword, player)
+    local p = getPlayer(player)
     local kw = keyword and string.lower(keyword)
     DE.log("=== Male outfits ===")
     local male = getAllOutfits(false)
@@ -186,7 +195,8 @@ function DE.Outfits(keyword)
     if p then p:Say(msg) end
 end
 
-function DE.Clean()
+function DE.Clean(player)
+    local p = getPlayer(player)
     local ids = {}
     for id in pairs(DE.EventManager.active) do
         table.insert(ids, id)
@@ -206,21 +216,20 @@ function DE.Clean()
         end
     end
 
-    local p = getSpecificPlayer(0)
     if p then p:Say(string.format("[DE] Force-cleaned all %d events", #ids)) end
     DE.log("Force-cleaned %d events", #ids)
 end
 
-function DE.ToggleCleanup()
+function DE.ToggleCleanup(player)
+    local p = getPlayer(player)
     DE.Config.eventCleanup = not DE.Config.eventCleanup
     local msg = string.format("EventCleanup set to: %s", tostring(DE.Config.eventCleanup))
     DE.log(msg)
-    local p = getSpecificPlayer(0)
     if p then p:Say(msg) end
 end
 
-function DE.Info()
-    local p = getSpecificPlayer(0)
+function DE.Info(player)
+    local p = getPlayer(player)
 
     DE.log("=== DynamicEvents Info ===")
     DE.log("Version: %s", DE.VERSION)
@@ -249,3 +258,51 @@ function DE.Info()
 end
 
 DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.VehicleInfo, DE.Clean, DE.CleanupNow, DE.Outfits, DE.ToggleCleanup, DE.Info")
+
+-- ============================================================================
+-- Client command forwarding: clients can't run server-side functions directly.
+-- The client shim in media/lua/client/DE_ClientCommands.lua forwards these;
+-- we execute them here. Only admins may use them.
+-- ============================================================================
+
+local function isPlayerAuthorized(p)
+    if not p then return false end
+    local level = nil
+    pcall(function() level = p:getAccessLevel() end)
+    return level == "admin"
+end
+
+Events.OnClientCommand.Add(function(module, command, player, args)
+    if module ~= "DynamicEvents" then return end
+
+    if not isPlayerAuthorized(player) then
+        DE.warn("DE: '%s' rejected — player not admin", command)
+        return
+    end
+
+    args = args or {}
+
+    if command == "Spawn" then
+        DE.Spawn(args.id, args.x, args.y, args.z, args.rot, player)
+    elseif command == "SpawnHere" then
+        DE.SpawnHere(args.id, player)
+    elseif command == "SpawnRandom" then
+        DE.SpawnRandom(player)
+    elseif command == "Clean" then
+        DE.Clean(player)
+    elseif command == "CleanupNow" then
+        DE.CleanupNow(player)
+    elseif command == "ListEvents" then
+        DE.ListEvents(player)
+    elseif command == "WhereAmI" then
+        DE.WhereAmI(player)
+    elseif command == "VehicleInfo" then
+        DE.VehicleInfo(player)
+    elseif command == "Outfits" then
+        DE.Outfits(args.keyword, player)
+    elseif command == "ToggleCleanup" then
+        DE.ToggleCleanup(player)
+    elseif command == "Info" then
+        DE.Info(player)
+    end
+end)

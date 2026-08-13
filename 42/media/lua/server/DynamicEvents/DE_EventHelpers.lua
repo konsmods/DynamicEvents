@@ -82,7 +82,14 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
 
     DE.guard("spawnVehicle " .. (vehicleType or "nil"), function()
         local vehicle = addVehicle(vehicleType, x, y, z)
-        if not vehicle then return end
+        if not vehicle then
+            DE.dbg("addVehicle failed, trying addVehicleDebug for %s", vehicleType)
+            vehicle = addVehicleDebug(vehicleType, IsoDirections.N, skinIndex, sq)
+        end
+        if not vehicle then
+            DE.warn("both addVehicle and addVehicleDebug returned nil for %s at (%d, %d, %d)", vehicleType or "?", x, y, z)
+            return
+        end
 
         if direction then
             vehicle:setAngles(0, direction, 0)
@@ -100,7 +107,7 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
         else
             DE.warn("vehicle:getId() failed for %s", vehicleType)
         end
-        DE.log("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
+        DE.dbg("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
         objects[#objects + 1] = { type = "vehicle", ref = vId, x = x, y = y, z = z }
 
         local storage = vehicle:getPartById("TruckBed") or vehicle:getPartById("Trunk")
@@ -229,7 +236,7 @@ local function cleanupOne(objData)
 end
 
 function EH.cleanupEvent(x, y, z, objects)
-    DE.log("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
+    DE.dbg("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
     if not objects then return end
 
     -- Collect all vehicles first, then remove — prevents ID map corruption.

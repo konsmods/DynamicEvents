@@ -1,16 +1,25 @@
 DE = DE or {}
 
+-- Emergency radio broadcasts for active events.
+-- signalStrength from event's radio.range (default 200 tiles). Messages
+-- degrade with distance. Note: the engine skips broadcasts when the
+-- listener stands at the exact source coordinates.
+-- Channel 105.6 MHz (105600 kHz), category "Emergency".
+
 local function ensureChannel()
-    if DE._radioChannel then return end
+    if DE._radioChannel and DE._radioChannel > 0 then return end
     local ok, radio = pcall(getZomboidRadio)
-    if not ok or not radio then return end
+    if not ok or not radio then
+        DE._radioChannel = 0
+        return
+    end
     DE._radioChannel = 105600
     radio:addChannelName("[DE] Emergency Broadcast", DE._radioChannel, "Emergency", true)
     DE.log("radio channel %d registered", DE._radioChannel)
 end
 
 local function broadcast(def, data, locName)
-    if not DE._radioChannel then return end
+    if not DE._radioChannel or DE._radioChannel <= 0 then return end
     local ok, radio = pcall(getZomboidRadio)
     if not ok or not radio then return end
 
@@ -26,13 +35,17 @@ local function broadcast(def, data, locName)
     if not bcastOk then
         DE.warn("radio broadcast failed: %s", err)
     else
-        DE.dbg("radio broadcast on ch %d: %s", DE._radioChannel, text)
+        DE.dbg("broadcast on ch %d: %s", DE._radioChannel, text)
     end
 end
 
+-- Called every tick by the scheduler. Iterates active events with a radio
+-- config and broadcasts messages at the configured interval (seconds).
 function DE.broadcastRadios()
-    ensureChannel()
-    if not DE._radioChannel then return end
+    if not DE._radioChannel or DE._radioChannel <= 0 then
+        ensureChannel()
+    end
+    if not DE._radioChannel or DE._radioChannel <= 0 then return end
 
     local now = DE.gameHours() * 3600
 

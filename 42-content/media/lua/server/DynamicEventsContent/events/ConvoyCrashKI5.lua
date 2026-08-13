@@ -17,7 +17,7 @@ local EVENT = {
     name           = "KI5 Military Convoy Crash",
     weight         = 14,
     sound          = "MetaAssaultRifle1",
-    cooldownHours  = 0.1,
+    cooldownHours  = 48,
     lifetimeHours  = 42,
     minDaysSurvived = 1,
 
