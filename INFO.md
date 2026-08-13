@@ -5,6 +5,7 @@
 - [ ] Loot Tables either via vanilla API or self-implementation
 - [ ] Debug Commands -> Scheduler (.List(); .Timer())
 - [ ] If possible, track and clean up zombies from events as well to avoid accumulation
+- [ ] Allow radio frequency to be defined per event (do presets get automatically added?)
 
 # Content Creation
 - [ ] Sounds for all events
