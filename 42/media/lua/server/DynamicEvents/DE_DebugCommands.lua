@@ -38,6 +38,11 @@ function DE.Spawn(eventId, x, y, z, rot, player)
     end
     local sx, sy, sz = x, y or 0, z or 0
 
+    local nearVeh = DE.EventManager.countVehiclesNear(sx, sy, sz)
+    if nearVeh > 0 then
+        DE.log("[DE] WARNING: %d vehicle(s) already within range of (%d, %d) — forced spawn", nearVeh, sx, sy)
+    end
+
     announceCoords(def, sx, sy, sz, player)
     DE.EventHelpers.playSound(sx, sy, sz, def.sound)
 
@@ -90,37 +95,39 @@ function DE.ListEvents(player)
     if p then p:Say(msg) end
 end
 
+function DE.CheckSpot(radius, player)
+    local p = getPlayer(player)
+    if not p then DE.log("No player"); return end
+    local x, y, z = p:getX(), p:getY(), p:getZ()
+    local r = radius or DE.Config.minDistanceFromVehicles or 15
+    local count = DE.EventManager.countVehiclesNear(x, y, z, r)
+    local msg = string.format("[DE] %d vehicle(s) within %d tiles of you", count, r)
+    DE.log(msg)
+    if p then p:Say(msg) end
+end
+
 function DE.VehicleInfo(player)
     local p = getPlayer(player)
     if not p then DE.log("No player"); return end
     local sq = p:getSquare()
     if not sq then DE.log("No square"); return end
-
     local ok, msg = pcall(function()
-        local vehicles = sq:getVehicles()
-        if not vehicles then
-            p:Say("[DE] getVehicles returned nil")
-            return
-        end
-        local n = vehicles:size()
-        if n == 0 then
+        -- B42: IsoGridSquare has no getVehicles(); a square maps to at most one
+        -- vehicle via getVehicleContainer().
+        local v = sq:getVehicleContainer()
+        if not v then
             p:Say("[DE] No vehicle on your square")
             return
         end
-        for i = 0, n - 1 do
-            local v = vehicles:get(i)
-            if v then
-                local id = 0
-                pcall(function() id = v:getId() end)
-                local md = nil
-                pcall(function() md = v:getModData().de_key end)
-                local script = nil
-                pcall(function() script = v:getScriptName() end)
-                local txt = string.format("[DE] id=%d key=%s script=%s", id, tostring(md), script or "?")
-                DE.log(txt)
-                p:Say(txt)
-            end
-        end
+        local id = 0
+        pcall(function() id = v:getId() end)
+        local md = nil
+        pcall(function() md = v:getModData().de_key end)
+        local script = nil
+        pcall(function() script = v:getScriptName() end)
+        local txt = string.format("[DE] id=%d key=%s script=%s", id, tostring(md), script or "?")
+        DE.log(txt)
+        p:Say(txt)
     end)
     if not ok then
         DE.warn("VehicleInfo failed: %s", tostring(msg))
@@ -298,6 +305,8 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         DE.WhereAmI(player)
     elseif command == "VehicleInfo" then
         DE.VehicleInfo(player)
+    elseif command == "CheckSpot" then
+        DE.CheckSpot(args.radius, player)
     elseif command == "Outfits" then
         DE.Outfits(args.keyword, player)
     elseif command == "ToggleCleanup" then

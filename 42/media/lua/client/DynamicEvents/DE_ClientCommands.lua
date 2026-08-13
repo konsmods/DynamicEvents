@@ -50,6 +50,10 @@ function DE.VehicleInfo()
     send("VehicleInfo", {})
 end
 
+function DE.CheckSpot(radius)
+    send("CheckSpot", { radius = radius })
+end
+
 function DE.Outfits(keyword)
     send("Outfits", { keyword = keyword })
 end

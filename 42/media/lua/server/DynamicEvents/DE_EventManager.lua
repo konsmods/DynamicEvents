@@ -115,6 +115,48 @@ function EM.isLocationOccupied(x, y, z)
     return false
 end
 
+-- Checks whether any vehicle (vanilla traffic-jam, wreck, or our own) is
+-- already within `radius` tiles of (x, y). Only checks loaded squares, so it
+-- works once the chunk is streamed in (which is when spawning matters anyway).
+function EM.isVehicleNear(x, y, z, radius)
+    radius = radius or (DE.Config.minDistanceFromVehicles or 15)
+    local c = getCell()
+    if not c then return false end
+
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = c:getGridSquare(x + dx, y + dy, z)
+            if sq and sq:getVehicleContainer() then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Debug helper: returns the number of vehicles within `radius` tiles of (x,y).
+function EM.countVehiclesNear(x, y, z, radius)
+    radius = radius or (DE.Config.minDistanceFromVehicles or 15)
+    local c = getCell()
+    if not c then return 0 end
+    -- A vehicle spans several squares, so dedupe by id instead of summing.
+    local seen, count = {}, 0
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = c:getGridSquare(x + dx, y + dy, z)
+            local veh = sq and sq:getVehicleContainer()
+            if veh then
+                local id = veh:getId()
+                if not seen[id] then
+                    seen[id] = true
+                    count = count + 1
+                end
+            end
+        end
+    end
+    return count
+end
+
 function EM.addActive(typeId, x, y, z, objects)
     EM._nextId = EM._nextId + 1
     local uid = typeId .. "_" .. tostring(EM._nextId)

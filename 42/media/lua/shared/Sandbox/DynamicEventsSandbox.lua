@@ -8,6 +8,7 @@ SandboxVars.DynamicEvents = {
     GracePeriodHours     = 0,
     EventCleanup         = true,
     MinDistanceBetweenEvents = 20,
+    MinDistanceFromVehicles  = 15,
     Debug                = false,
 
     EventToggles = {

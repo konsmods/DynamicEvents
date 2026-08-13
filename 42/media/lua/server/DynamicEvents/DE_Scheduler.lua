@@ -18,6 +18,7 @@ local function refreshConfig()
     DE.Config.gracePeriodHours     = getSandboxOption("GracePeriodHours", 0)
     DE.Config.eventCleanup         = getSandboxOption("EventCleanup", true)
     DE.Config.minDistanceBetweenEvents = getSandboxOption("MinDistanceBetweenEvents", 20)
+    DE.Config.minDistanceFromVehicles  = getSandboxOption("MinDistanceFromVehicles", 15)
     DE.Config.debug                = getSandboxOption("Debug", false)
 end
 
@@ -140,6 +141,8 @@ local function tryFireEvent()
             local lz = location.z or 0
             if DE.EventManager.isLocationOccupied(location.x, location.y, lz) then
                 DE.dbg("'%s' location '%s' too close to an active event, skipping", def.id, location.name)
+            elseif DE.EventManager.isVehicleNear(location.x, location.y, lz) then
+                DE.dbg("'%s' location '%s' too close to an existing vehicle, skipping", def.id, location.name)
             else
                 DE.log("firing event '%s' at (%d, %d, %d)", def.id, location.x, location.y, lz)
                 DE.EventManager.markLocationUsed(def.id, location)

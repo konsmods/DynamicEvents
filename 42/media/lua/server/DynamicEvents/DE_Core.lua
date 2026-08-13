@@ -10,6 +10,7 @@ DE.Config = {
     gracePeriodHours     = 0,   -- hours after game start before first event
     eventCleanup         = true,  -- false = locations are one-use, events never expire
     minDistanceBetweenEvents = 20, -- tiles between event centers
+    minDistanceFromVehicles  = 15, -- tiles between event center and any existing vehicle
     debug                = false,
 }
 
