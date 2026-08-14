@@ -493,6 +493,111 @@ function EH.clearVehicles(x, y, z, radius)
     return removed
 end
 
+-- Structural flags: an object carrying any of these is wall/door/window
+-- structure and must never be cleared as an "obstacle".
+local STRUCTURE_FLAGS = {
+    IsoFlagType.WallN, IsoFlagType.WallW, IsoFlagType.WallNW,
+    IsoFlagType.WallNTrans, IsoFlagType.WallWTrans, IsoFlagType.WallSE,
+    IsoFlagType.DoorWallN, IsoFlagType.DoorWallW,
+    IsoFlagType.doorN, IsoFlagType.doorW,
+    IsoFlagType.windowN, IsoFlagType.windowW,
+    IsoFlagType.WindowN, IsoFlagType.WindowW,
+}
+
+local function isBuildingStructure(obj)
+    if instanceof(obj, "IsoWindow")
+        or instanceof(obj, "IsoWindowFrame")
+        or instanceof(obj, "IsoDoor")
+        or instanceof(obj, "IsoLightSwitch")
+        or instanceof(obj, "IsoCurtain")
+        or instanceof(obj, "IsoStairs") then
+        return true
+    end
+    local props = obj:getProperties()
+    if props then
+        for _, flag in ipairs(STRUCTURE_FLAGS) do
+            if props:has(flag) then return true end
+        end
+    end
+    return false
+end
+
+-- Removes a single non-vehicle object from its square using the removal path
+-- matching its type (item, corpse, or tile object).
+local function clearSquareObject(sq, obj)
+    if instanceof(obj, "IsoWorldInventoryObject") then
+        sq:transmitRemoveItemFromSquare(obj)
+    elseif instanceof(obj, "IsoDeadBody") then
+        sq:removeCorpse(obj, false)
+    else
+        if isClient() then sq:transmitRemoveItemFromSquare(obj) end
+        if isServer() then sq:transmitRemoveItemFromSquareOnClients(obj) end
+        sq:RemoveTileObject(obj)
+    end
+end
+
+-- Clears a spawn area so an event can land. `level` is one of:
+--   "vehicles" — vehicles only (default; also accepts `true`)
+--   "props"    — vehicles + corpses + loose ground items
+--   "all"      — props + trees + static props (never building structure)
+-- Returns how many things were removed.
+function EH.clearObstacles(x, y, z, radius, level)
+    if level == true then level = "vehicles" end
+    level = level or "vehicles"
+
+    local c = getCell()
+    if not c then return 0 end
+
+    local seen, removed = {}, 0
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = c:getGridSquare(x + dx, y + dy, z)
+            if sq then
+                -- Vehicles are always cleared (the primary obstacle).
+                local veh = sq:getVehicleContainer()
+                if veh then
+                    local id = veh:getId()
+                    if not seen[id] then
+                        seen[id] = true
+                        EH.removeVehicle(veh)
+                        removed = removed + 1
+                    end
+                end
+
+                if level ~= "vehicles" then
+                    -- Corpses live in the static-moving-objects list.
+                    local movables = sq:getStaticMovingObjects()
+                    for i = movables:size() - 1, 0, -1 do
+                        local obj = movables:get(i)
+                        if obj and instanceof(obj, "IsoDeadBody") then
+                            DE.guard("clearObstacle", function() sq:removeCorpse(obj, false) end)
+                            removed = removed + 1
+                        end
+                    end
+
+                    -- Loose items are cleared for "props"; trees and static
+                    -- props additionally for "all".
+                    local objects = sq:getObjects()
+                    for i = objects:size() - 1, 0, -1 do
+                        local obj = objects:get(i)
+                        if obj then
+                            local clear = instanceof(obj, "IsoWorldInventoryObject")
+                            if not clear and level == "all" and not isBuildingStructure(obj) then
+                                clear = instanceof(obj, "IsoTree") or instanceof(obj, "IsoObject")
+                            end
+                            if clear then
+                                DE.guard("clearObstacle", function() clearSquareObject(sq, obj) end)
+                                removed = removed + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return removed
+end
+
 -- Removes everything an event left behind. Clearing requires admin presence,
 -- so the site is streamed in; anything not reachable from here is left to the
 -- game. Returns nothing.

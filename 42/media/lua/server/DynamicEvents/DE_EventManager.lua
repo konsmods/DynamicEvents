@@ -34,8 +34,9 @@ function EM.register(def)
     def.dependencies = def.dependencies or {}
     def.rot = def.rot or 0
     def.cleanup = def.cleanup or DE.EventHelpers.cleanupEvent
-    -- When true the scheduler clears any vehicles in the spawn area rather than
-    -- skipping this location. clearRadius defaults to MinDistanceFromVehicles.
+    -- When set ("vehicles"/"props"/"all") the scheduler clears obstacles from
+    -- the spawn area rather than skipping this location. clearRadius defaults
+    -- to MinDistanceFromVehicles. See EH.clearObstacles for the level meanings.
     def.clearObstacles = def.clearObstacles or false
 
     EM.types[def.id] = def
@@ -460,13 +461,13 @@ function EM.runSpawn(def, x, y, z, rot)
     -- cleanup can find them again later.
     local uid = EM.reserveUid(def.id)
 
-    -- Events that clear obstacles remove any vehicles in their footprint first,
-    -- so the spawn never lands on top of an existing car.
+    -- Events that clear obstacles remove them from their footprint first, so
+    -- the spawn never lands on top of an existing car/prop.
     if def.clearObstacles then
         local radius = EM.clearRadiusFor(def)
-        local cleared = DE.EventHelpers.clearVehicles(x, y, z, radius)
+        local cleared = DE.EventHelpers.clearObstacles(x, y, z, radius, def.clearObstacles)
         if cleared > 0 then
-            DE.log("%s cleared %d vehicle(s) from its %d-tile spawn area",
+            DE.log("%s cleared %d obstacle(s) from its %d-tile spawn area",
                 def.id, cleared, radius)
         end
     end

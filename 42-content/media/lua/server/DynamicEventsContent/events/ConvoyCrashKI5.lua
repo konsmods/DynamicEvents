@@ -21,9 +21,10 @@ local EVENT = {
     cooldownHours  = 0,
     minDaysSurvived = 1,
 
-    -- The convoy wants a clear stretch of road: if vehicles are in the way,
-    -- clear them and spawn anyway instead of skipping this location.
-    clearObstacles = true,
+    -- The convoy wants a clear stretch of road: clear obstacles in the way and
+    -- spawn anyway instead of skipping this location. "all" removes vehicles,
+    -- corpses, loose items, trees and static props (never walls/doors/windows).
+    clearObstacles = "all",
     clearRadius    = 25,
 
     -- Mod IDs, not vehicle script names: the "Burnt" suffix belongs to the
