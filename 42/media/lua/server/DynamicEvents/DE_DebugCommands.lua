@@ -65,6 +65,41 @@ function DE.SpawnRandom(player)
     DE.Spawn(DE.pick(all).id, nil, nil, nil, nil, player)
 end
 
+-- Like DE.Spawn, but clears any vehicles in the event's spawn area first, so it
+-- spawns even if cars are in the way (regardless of the event's clearObstacles
+-- flag). Useful for testing the obstacle-clearing path.
+function DE.SpawnForce(eventId, x, y, z, rot, player)
+    local def = DE.EventManager.get(eventId)
+    if not def then
+        DE.log("Unknown event: %s", eventId)
+        return
+    end
+
+    local p = getPlayer(player)
+    if not x then
+        if p then
+            x, y, z = p:getX(), p:getY(), p:getZ()
+        else
+            DE.log("No player found, using first location")
+            local loc = def.locations[1]
+            x, y, z = loc.x, loc.y, loc.z or 0
+        end
+    end
+    local sx, sy, sz = x, y or 0, z or 0
+
+    local radius = DE.EventManager.clearRadiusFor(def)
+    local cleared = DE.EventHelpers.clearVehicles(sx, sy, sz, radius)
+    DE.log("forced spawn: cleared %d vehicle(s) within %d tiles of (%d, %d)",
+        cleared, radius, sx, sy)
+
+    local result = DE.EventManager.spawnOrQueue(def, sx, sy, sz, rot)
+    if result == "queued" then
+        report(p, "Parked %s at (%d, %d, %d) — appears when that area loads", def.name or def.id, sx, sy, sz)
+    else
+        report(p, "Spawned %s at (%d, %d, %d)", def.name or def.id, sx, sy, sz)
+    end
+end
+
 -- Lists everything the mod is holding: events standing in the world (with the
 -- uid needed to clear them) and spawns still parked waiting for their chunk.
 function DE.ListEvents(player)
@@ -147,9 +182,8 @@ function DE.GoTo(uid, player)
     end
 end
 
--- Clears every tracked event in the world. Only reaches events whose chunks
--- are currently loaded, so an admin standing where nothing is streamed in will
--- only clear what they can actually see.
+-- Clears every tracked event in the world. Events whose chunks aren't loaded
+-- are parked and cleared the moment a player streams the area in.
 function DE.Clean(player)
     local p = getPlayer(player)
 
@@ -162,12 +196,17 @@ function DE.Clean(player)
         uids[#uids + 1] = uid
     end
 
-    local cleared = 0
+    local cleared, parked = 0, 0
     for _, uid in ipairs(uids) do
-        if DE.EventManager.clearEvent(uid) then cleared = cleared + 1 end
+        local ok, reason = DE.EventManager.clearEvent(uid)
+        if ok and reason == "parked" then
+            parked = parked + 1
+        elseif ok then
+            cleared = cleared + 1
+        end
     end
 
-    report(p, "[DE] Cleared %d tracked event(s)", cleared)
+    report(p, "[DE] Cleared %d event(s), %d parked until their area loads", cleared, parked)
 end
 
 -- Lists work parked against a square, waiting for that chunk to stream in.
@@ -192,8 +231,8 @@ function DE.Pending(player)
     end
 end
 
--- Clears one tracked event by uid. Its location becomes available again.
--- Requires admin presence: only objects in loaded chunks can be removed.
+-- Clears one tracked event by uid. Its location becomes available again. If the
+-- site's chunks aren't loaded, the clear is parked until they stream in.
 function DE.ClearEvent(uid, player)
     local p = getPlayer(player)
     if not uid then
@@ -209,10 +248,12 @@ function DE.ClearEvent(uid, player)
 
     DE.log("Clearing '%s' (%d objects)", uid, data.objects and #data.objects or 0)
     local ok, reason = DE.EventManager.clearEvent(uid)
-    if ok then
-        report(p, "[DE] Cleared %s", uid)
-    else
+    if not ok then
         report(p, "[DE] %s: %s", uid, reason)
+    elseif reason == "parked" then
+        report(p, "[DE] %s parked — will clear when the area loads", uid)
+    else
+        report(p, "[DE] Cleared %s", uid)
     end
 end
 
@@ -222,17 +263,20 @@ function DE.ClearNearby(radius, player)
     if not p then DE.log("No player"); return end
 
     local r = radius or 100
-    local cleared = 0
+    local cleared, parked = 0, 0
     for _, ev in ipairs(DE.EventManager.getActiveEventsNear(p:getX(), p:getY())) do
         if ev.distance <= r then
-            if DE.EventManager.clearEvent(ev.uid) then
+            local ok, reason = DE.EventManager.clearEvent(ev.uid)
+            if ok and reason == "parked" then
+                parked = parked + 1
+            elseif ok then
                 DE.log("Cleared '%s' at (%d, %d), ~%d tiles away", ev.uid, ev.x, ev.y, ev.distance)
                 cleared = cleared + 1
             end
         end
     end
 
-    report(p, "[DE] Cleared %d event(s) within %d tiles", cleared, r)
+    report(p, "[DE] Cleared %d event(s), %d parked within %d tiles", cleared, parked, r)
 end
 
 -- Resets every event type's cooldown, making them immediately eligible again.
@@ -389,6 +433,7 @@ local HANDLERS = {
     Spawn         = function(p, a) DE.Spawn(a.id, a.x, a.y, a.z, a.rot, p) end,
     SpawnHere     = function(p, a) DE.SpawnHere(a.id, p) end,
     SpawnRandom   = function(p)    DE.SpawnRandom(p) end,
+    SpawnForce    = function(p, a) DE.SpawnForce(a.id, a.x, a.y, a.z, a.rot, p) end,
     Clean         = function(p)    DE.Clean(p) end,
     ClearEvent    = function(p, a) DE.ClearEvent(a.uid, p) end,
     ClearNearby   = function(p, a) DE.ClearNearby(a.radius, p) end,
@@ -428,7 +473,7 @@ Events.OnClientCommand.Add(function(module, command, player, args)
     handler(player, args or {})
 end)
 
-DE.dbg("debug console — spawn: DE.Spawn, DE.SpawnHere, DE.SpawnRandom | "
+DE.dbg("debug console — spawn: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.SpawnForce | "
     .. "admin: DE.ListEvents, DE.GoTo(uid), DE.ClearEvent(uid), DE.ClearNearby(radius), "
     .. "DE.Clean, DE.Pending, DE.ClearCooldowns | "
     .. "info: DE.WhereAmI, DE.VehicleInfo, DE.CheckSpot, DE.Outfits, DE.Info, DE.SchedulerInfo")

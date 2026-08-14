@@ -34,6 +34,9 @@ function EM.register(def)
     def.dependencies = def.dependencies or {}
     def.rot = def.rot or 0
     def.cleanup = def.cleanup or DE.EventHelpers.cleanupEvent
+    -- When true the scheduler clears any vehicles in the spawn area rather than
+    -- skipping this location. clearRadius defaults to MinDistanceFromVehicles.
+    def.clearObstacles = def.clearObstacles or false
 
     EM.types[def.id] = def
 
@@ -280,6 +283,13 @@ function EM.countVehiclesNear(x, y, z, radius)
     return count
 end
 
+-- How many tiles around the centre an event needs clear before it can spawn.
+-- Per-event clearRadius wins; otherwise fall back to the global
+-- MinDistanceFromVehicles, which is the same space the vehicle check uses.
+function EM.clearRadiusFor(def)
+    return def.clearRadius or (DE.Config.minDistanceFromVehicles or 15)
+end
+
 -- Why a given location can't be used right now, or nil if it can.
 --
 -- Distance to players is deliberately NOT a requirement: an unloaded site is
@@ -287,13 +297,17 @@ end
 -- that we don't pop a wreck into view of someone already standing there.
 --
 -- Note the vehicle check only sees loaded chunks, so for a parked spawn it is
--- re-run for real at materialisation time in runQueuedSpawn.
-function EM.locationBlockedBy(loc)
+-- re-run for real at materialisation time in runQueuedSpawn. An event that
+-- clears obstacles ignores the vehicle check entirely.
+function EM.locationBlockedBy(loc, def)
     local z = loc.z or 0
     if EM.isLocationOccupied(loc.x, loc.y, z) then return "an event is already here" end
     if EM.isAreaCrowded(loc.x, loc.y)         then return "area already has enough events" end
     if EM.playerTooClose(loc.x, loc.y)        then return "a player is standing too close" end
     if EM.isSiteLoaded(loc.x, loc.y, z) and EM.isVehicleNear(loc.x, loc.y, z) then
+        if def and def.clearObstacles then
+            return nil   -- will clear the vehicles and spawn anyway
+        end
         return "existing vehicles too close"
     end
     return nil
@@ -313,7 +327,7 @@ function EM.pickSpawnableLocation(def)
         local loc = candidates[idx]
         table.remove(candidates, idx)
 
-        local blocked = EM.locationBlockedBy(loc)
+        local blocked = EM.locationBlockedBy(loc, def)
         if not blocked then return loc, nil end
         lastReason = blocked
     end
@@ -395,12 +409,37 @@ function EM.getActiveEventsNear(x, y)
     return out
 end
 
+-- Runs the cleanup for an event that was cleared while its chunks were not
+-- loaded. By the time this runs (on the square-load hook), the site is real.
+function EM.runQueuedCleanup(args)
+    local def = EM.get(args.typeId)
+    if def and def.cleanup then
+        DE.guard((args.typeId or "?") .. " deferred cleanup", function()
+            def.cleanup(args.x, args.y, args.z, args.objects)
+        end)
+    end
+end
+
 -- Events are permanent: nothing expires on its own. Clearing is an explicit
--- admin action that must happen on-site (the chunks have to be loaded for Lua
--- to remove anything), and it is what frees the location for reuse.
+-- admin action, and it is what frees the location for reuse. If the site's
+-- chunk is loaded the cleanup runs now; otherwise it is parked against the
+-- square and runs the moment a player streams that chunk in (the same deferred
+-- mechanism the spawn queue uses).
 function EM.clearEvent(uid)
     local data = EM.active[uid]
     if not data then return false, "no such event" end
+
+    if not EM.isSiteLoaded(data.x, data.y, data.z) then
+        -- Lua can't remove anything from an unloaded chunk, so park the cleanup
+        -- and drop the event from tracking now.
+        DE.SquareQueue.add(data.x, data.y, data.z, "cleanup", {
+            typeId = data.typeId,
+            x = data.x, y = data.y, z = data.z,
+            objects = data.objects,
+        })
+        EM.removeActive(uid)
+        return true, "parked"
+    end
 
     local def = EM.get(data.typeId)
     if def and def.cleanup then
@@ -420,6 +459,17 @@ function EM.runSpawn(def, x, y, z, rot)
     -- Reserve the uid up front: the context stamps it onto spawned zombies so
     -- cleanup can find them again later.
     local uid = EM.reserveUid(def.id)
+
+    -- Events that clear obstacles remove any vehicles in their footprint first,
+    -- so the spawn never lands on top of an existing car.
+    if def.clearObstacles then
+        local radius = EM.clearRadiusFor(def)
+        local cleared = DE.EventHelpers.clearVehicles(x, y, z, radius)
+        if cleared > 0 then
+            DE.log("%s cleared %d vehicle(s) from its %d-tile spawn area",
+                def.id, cleared, radius)
+        end
+    end
 
     DE.EventHelpers.playSound(x, y, z, def.sound)
 
@@ -463,7 +513,8 @@ function EM.runQueuedSpawn(args)
 
     -- The world moved on while this was parked, and the vehicle check at queue
     -- time couldn't see anything. Now the chunk is real, check it properly.
-    if EM.isVehicleNear(args.x, args.y, args.z) then
+    -- Events that clear obstacles skip this and clear the vehicles in runSpawn.
+    if EM.isVehicleNear(args.x, args.y, args.z) and not def.clearObstacles then
         DE.warn("parked spawn for '%s' at (%d, %d) abandoned: vehicles now occupy the spot",
             def.id, args.x, args.y)
         return

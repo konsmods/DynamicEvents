@@ -76,17 +76,20 @@ persists with the rest of the state.
 ## Clearing events (admin only)
 
 `EM.active` is a permanent registry of spawned-but-not-cleared events. Clearing
-is manual and **requires admin presence** — Lua can only remove things in
-loaded chunks, so there is no deferred/parked clear. `EM.clearEvent` runs the
-event's `cleanup` (default `EH.cleanupEvent`) and drops the event from the
-registry, freeing the location for reuse.
+is manual. If the site's chunk is loaded, `EM.clearEvent` runs the event's
+`cleanup` (default `EH.cleanupEvent`) and drops the event from the registry,
+freeing the location for reuse. If it is **not** loaded (e.g. right after a
+restart, before anyone goes there), the clear is parked against the square via
+`DE.SquareQueue` and runs the moment a player streams that chunk in — the same
+deferred mechanism the spawn queue uses. `clearEvent` returns `true, "parked"`
+in that case.
 
 - `DE.ListEvents()` — every tracked event, nearest first, with uid and coords
 - `DE.GoTo(uid)` — teleport to an event so its chunks load (nearest if uid omitted)
-- `DE.ClearEvent(uid)` — clear one event on-site
+- `DE.ClearEvent(uid)` — clear one event (parked if its chunks aren't loaded)
 - `DE.ClearNearby(radius)` — clear everything within radius (default 100)
-- `DE.Clean()` — clear every tracked event in loaded range
-- `DE.Pending()` — spawns parked against a square, waiting on a chunk load
+- `DE.Clean()` — clear every tracked event
+- `DE.Pending()` — spawns/clears parked against a square, waiting on a chunk load
 
 `EH.cleanupEvent` removes whatever it can reach and silently leaves the rest to
 the game: vehicles by id, falling back to a proximity sweep around each
@@ -96,7 +99,8 @@ sprites and moveables are removed by square. Zombies are matched by **count**,
 not identity — they lose their modData tag and online id the moment their chunk
 unloads (the engine virtualizes them), so cleanup removes the same number of
 loaded zombies it spawned, from within `ZOMBIE_CLEANUP_RADIUS` (20) of the site.
-A custom `def.cleanup(x, y, z, objects)` replaces the default entirely.
+Dead corpses (`IsoDeadBody`) in that radius are removed too. A custom
+`def.cleanup(x, y, z, objects)` replaces the default entirely.
 
 ## Creating events
 

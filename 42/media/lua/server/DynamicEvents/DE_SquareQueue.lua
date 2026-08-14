@@ -3,9 +3,10 @@ if isClient() then return end
 DE = DE or {}
 
 -- ============================================================================
--- Deferred work parked against a grid square. Only used for spawning events
--- whose chosen location hasn't streamed in yet; clearing is always done
--- on-site by an admin, so it never needs to be parked.
+-- Deferred work parked against a grid square: spawning events whose location
+-- hasn't streamed in yet, and clearing events whose chunks aren't loaded (Lua
+-- can only remove things in loaded chunks, so an off-site clear parks the work
+-- and runs it when a player streams the square in).
 --
 -- PZ streams chunks around players and there is no Lua API to force one in
 -- (ServerMap isn't exposed). So instead of requiring a player to be nearby,
@@ -141,6 +142,10 @@ end
 
 SQ.handlers.spawn = function(entry)
     DE.EventManager.runQueuedSpawn(entry.args)
+end
+
+SQ.handlers.cleanup = function(entry)
+    DE.EventManager.runQueuedCleanup(entry.args)
 end
 
 DE.SquareQueue = SQ

@@ -35,6 +35,12 @@ local EVENT = {
     -- A location is blocked while its event is still standing, and becomes
     -- available again once cleared.
 
+    -- Optional: clear vehicles in the spawn area instead of skipping a blocked
+    -- location. clearRadius is how much space to clear (defaults to the global
+    -- MinDistanceFromVehicles). Set both when the event must fit a specific spot.
+    -- clearObstacles = true,
+    -- clearRadius    = 25,
+
     -- Optional: sound effect played at the event location
     -- sound = "MetaShotgun1",
 

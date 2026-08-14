@@ -418,6 +418,39 @@ local function cleanupZombies(x, y, count)
     DE.dbg("cleaned up %d of %d spawned zombie(s)", #doomed, count)
 end
 
+-- Removes dead zombie corpses within the same radius as the living-zombie sweep.
+-- Killed event zombies become IsoDeadBody objects on their square; there is no
+-- cell-level corpse list, so walk the radius and clear whatever bodies are there.
+-- Unlike living zombies (matched by count), corpses can't be attributed to the
+-- event after virtualization, so all corpses in the area are removed.
+local function cleanupCorpses(x, y, z)
+    if not DE.Config.cleanupZombies then return end
+
+    local c = cell()
+    if not c then return end
+
+    local removed = 0
+    for dx = -ZOMBIE_CLEANUP_RADIUS, ZOMBIE_CLEANUP_RADIUS do
+        for dy = -ZOMBIE_CLEANUP_RADIUS, ZOMBIE_CLEANUP_RADIUS do
+            local sq = c:getGridSquare(x + dx, y + dy, z)
+            if sq then
+                local movables = sq:getStaticMovingObjects()
+                for i = movables:size() - 1, 0, -1 do
+                    local obj = movables:get(i)
+                    if obj and instanceof(obj, "IsoDeadBody") then
+                        DE.guard("cleanupCorpse", function() sq:removeCorpse(obj, false) end)
+                        removed = removed + 1
+                    end
+                end
+            end
+        end
+    end
+
+    if removed > 0 then
+        DE.dbg("cleaned up %d corpse(s)", removed)
+    end
+end
+
 -- A vehicle's runtime id is a 16-bit `short` that gets reassigned when the
 -- world reloads, so the id recorded at spawn time does not survive a restart
 -- (and the modData tag is not guaranteed to survive either). The one thing that
@@ -430,27 +463,28 @@ local VEHICLE_PROXIMITY_RADIUS = 6
 -- Clearing always runs server-side (it is an admin action), so there is no
 -- client path here: detach the vehicle from the world, then delete it from the
 -- save so it does not reappear on reload.
-local function removeVehicle(v)
+function EH.removeVehicle(v)
     DE.guard("cleanupVehicle world", function() v:removeFromWorld() end)
     DE.guard("cleanupVehicle perm", function() v:permanentlyRemove() end)
 end
 
--- Removes any loaded vehicle within VEHICLE_PROXIMITY_RADIUS tiles of (x, y).
--- Returns how many were removed.
-local function removeVehicleNear(x, y, z)
+-- Removes every loaded vehicle within `radius` tiles of (x, y, z). Returns how
+-- many were removed. Shared by cleanup (small proximity radius) and by events
+-- that clear obstacles from their spawn area before spawning.
+function EH.clearVehicles(x, y, z, radius)
     local c = getCell()
     if not c then return 0 end
 
     local seen, removed = {}, 0
-    for dx = -VEHICLE_PROXIMITY_RADIUS, VEHICLE_PROXIMITY_RADIUS do
-        for dy = -VEHICLE_PROXIMITY_RADIUS, VEHICLE_PROXIMITY_RADIUS do
+    for dx = -radius, radius do
+        for dy = -radius, radius do
             local sq = c:getGridSquare(x + dx, y + dy, z)
             local veh = sq and sq:getVehicleContainer()
             if veh then
                 local id = veh:getId()
                 if not seen[id] then
                     seen[id] = true
-                    removeVehicle(veh)
+                    EH.removeVehicle(veh)
                     removed = removed + 1
                 end
             end
@@ -504,12 +538,13 @@ function EH.cleanupEvent(x, y, z, objects)
     -- recorded positions whose ids no longer resolved. The sweep is the only
     -- grid walk, so it runs last.
     for _, v in ipairs(vehicles) do
-        removeVehicle(v)
+        EH.removeVehicle(v)
     end
     cleanupZombies(x, y, zombieCount)
+    cleanupCorpses(x, y, z)
     local swept = 0
     for _, pos in ipairs(sweptPositions) do
-        swept = swept + removeVehicleNear(pos.x, pos.y, pos.z)
+        swept = swept + EH.clearVehicles(pos.x, pos.y, pos.z, VEHICLE_PROXIMITY_RADIUS)
     end
     if swept > 0 then
         DE.log("removed %d vehicle(s) by proximity whose recorded ids no longer resolved", swept)

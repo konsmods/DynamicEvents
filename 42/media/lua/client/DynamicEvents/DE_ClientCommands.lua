@@ -24,6 +24,7 @@ local COMMANDS = {
     { name = "Spawn",         args = { "id", "x", "y", "z", "rot" } },
     { name = "SpawnHere",     args = { "id" } },
     { name = "SpawnRandom" },
+    { name = "SpawnForce",    args = { "id", "x", "y", "z", "rot" } },
     { name = "Clean" },
     { name = "ClearEvent",    args = { "uid" } },
     { name = "ClearNearby",   args = { "radius" } },

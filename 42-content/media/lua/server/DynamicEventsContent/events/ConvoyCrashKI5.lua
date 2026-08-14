@@ -21,6 +21,11 @@ local EVENT = {
     cooldownHours  = 0,
     minDaysSurvived = 1,
 
+    -- The convoy wants a clear stretch of road: if vehicles are in the way,
+    -- clear them and spawn anyway instead of skipping this location.
+    clearObstacles = true,
+    clearRadius    = 25,
+
     -- Mod IDs, not vehicle script names: the "Burnt" suffix belongs to the
     -- vehicle variant (Base.92amgeneralM998Burnt), not to the mod that adds it.
     dependencies = { "82oshkoshM911", "86oshkoshP19A", "92amgeneralM998", "67commando" },
