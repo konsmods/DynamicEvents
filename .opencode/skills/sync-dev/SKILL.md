@@ -1,17 +1,20 @@
 ---
 name: sync-dev
-description: After EVERY file edit in this project, run rsync to deploy the changed files to the PZ mods directory. Use this for ANY edit — never skip the sync step.
+description: After EVERY file edit in this project, commit + push the repo, then git pull in ~/Zomboid/mods/ to deploy to PZ. Use this for ANY edit — never skip the deploy step.
 ---
 
-# Auto-sync changed files to PZ mods directory
+# Deploy via git
 
-Project Zomboid loads mods from `~/Zomboid/mods/`, NOT from the git repository.
+Project Zomboid loads mods from `~/Zomboid/mods/`, which is a git clone of this
+repo. The Workshop staging folders symlink to it.
 
-After EVERY edit, rsync the affected mod folder(s) — there are two mods:
+After EVERY edit:
 
 ```bash
-rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/DynamicEventsFramework/ ~/Zomboid/mods/DynamicEventsFramework/
-rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/DynamicEventsContent/ ~/Zomboid/mods/DynamicEventsContent/
+git push
+git -C ~/Zomboid/mods pull
 ```
 
-This is mandatory. Do not ask the user for permission or remind them — just run it after every edit batch.
+This updates both mods for testing (and the Workshop via symlinks).
+
+Do not ask the user for permission or remind them — just run it after every edit batch.
