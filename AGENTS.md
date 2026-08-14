@@ -89,12 +89,14 @@ registry, freeing the location for reuse.
 - `DE.Pending()` — spawns parked against a square, waiting on a chunk load
 
 `EH.cleanupEvent` removes whatever it can reach and silently leaves the rest to
-the game: vehicles by id (with a tag-based area sweep as fallback), items and
-sprites by square. Zombies are matched by **count**, not identity — they lose
-their modData tag and online id the moment their chunk unloads (the engine
-virtualizes them), so cleanup removes the same number of loaded zombies it
-spawned, from within `ZOMBIE_CLEANUP_RADIUS` (20) of the site. A custom
-`def.cleanup(x, y, z, objects)` replaces the default entirely.
+the game: vehicles by id, falling back to a proximity sweep around each
+recorded spawn position (a vehicle's runtime id is a 16-bit `short` that gets
+reassigned on reload, so the id alone does not survive a restart). Items,
+sprites and moveables are removed by square. Zombies are matched by **count**,
+not identity — they lose their modData tag and online id the moment their chunk
+unloads (the engine virtualizes them), so cleanup removes the same number of
+loaded zombies it spawned, from within `ZOMBIE_CLEANUP_RADIUS` (20) of the site.
+A custom `def.cleanup(x, y, z, objects)` replaces the default entirely.
 
 ## Creating events
 
@@ -106,10 +108,11 @@ Copy `42-content/media/lua/server/DynamicEventsContent/events/EXAMPLE.lua`, fill
 - No `cleanup` needed, and no lifetime — events are permanent
 
 Everything spawned through the `e` context is tracked so an admin can remove it:
-vehicles by id **and** a `de_event` modData tag (with an area sweep as fallback
-when the id no longer resolves), items and sprites by square. Zombies are
-tracked as a bare count (`e:SpawnZombies` returns how many it spawned); on
-clear the mod removes that many loaded zombies from around the site.
+vehicles by id (with a proximity sweep around each recorded spawn position as
+fallback, since ids are runtime `short`s that change on reload), items, sprites
+and moveables by square. Zombies are tracked as a bare count (`e:SpawnZombies`
+returns how many it spawned); on clear the mod removes that many loaded zombies
+from around the site.
 
 ## Server setup
 

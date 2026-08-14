@@ -209,8 +209,9 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex, 
             vehicle:updateSkin()
         end
 
-        -- Tag as well as record the id: ids don't always survive (or arrive),
-        -- and the tag lets cleanup find the vehicle by sweeping the area.
+        -- Tag for diagnostics (DE.VehicleInfo shows it). Cleanup no longer
+        -- relies on this tag, since vehicle modData does not reliably survive a
+        -- restart.
         if tag then
             DE.guard("tag vehicle", function() vehicle:getModData().de_event = tag end)
         end
@@ -417,10 +418,14 @@ local function cleanupZombies(x, y, count)
     DE.dbg("cleaned up %d of %d spawned zombie(s)", #doomed, count)
 end
 
--- The convoy event's vehicles reach about +/-15 tiles from the site centre
--- (+/-12 spacing plus vehicle length), which is the worst case this needs to
--- find. 15 keeps the grid at 31x31 (~960 squares) instead of 51x51 (~2600).
-local VEHICLE_SWEEP_RADIUS = 15
+-- A vehicle's runtime id is a 16-bit `short` that gets reassigned when the
+-- world reloads, so the id recorded at spawn time does not survive a restart
+-- (and the modData tag is not guaranteed to survive either). The one thing that
+-- is stable is where we put it, so sweep a small radius around the recorded
+-- spawn position and remove whatever vehicle is there. The site was guaranteed
+-- vehicle-free at spawn time (MinDistanceFromVehicles), so a player's own car
+-- is not expected to be in this radius.
+local VEHICLE_PROXIMITY_RADIUS = 6
 
 -- Clearing always runs server-side (it is an admin action), so there is no
 -- client path here: detach the vehicle from the world, then delete it from the
@@ -430,29 +435,23 @@ local function removeVehicle(v)
     DE.guard("cleanupVehicle perm", function() v:permanentlyRemove() end)
 end
 
--- Fallback for vehicles whose recorded id no longer resolves: sweep the site
--- for vehicles carrying one of this event's tags. Catches ids that were never
--- assigned at spawn time or were reassigned since.
-local function sweepTaggedVehicles(x, y, z, tags)
+-- Removes any loaded vehicle within VEHICLE_PROXIMITY_RADIUS tiles of (x, y).
+-- Returns how many were removed.
+local function removeVehicleNear(x, y, z)
     local c = getCell()
     if not c then return 0 end
 
     local seen, removed = {}, 0
-    for dx = -VEHICLE_SWEEP_RADIUS, VEHICLE_SWEEP_RADIUS do
-        for dy = -VEHICLE_SWEEP_RADIUS, VEHICLE_SWEEP_RADIUS do
+    for dx = -VEHICLE_PROXIMITY_RADIUS, VEHICLE_PROXIMITY_RADIUS do
+        for dy = -VEHICLE_PROXIMITY_RADIUS, VEHICLE_PROXIMITY_RADIUS do
             local sq = c:getGridSquare(x + dx, y + dy, z)
             local veh = sq and sq:getVehicleContainer()
             if veh then
                 local id = veh:getId()
                 if not seen[id] then
                     seen[id] = true
-                    if veh:hasModData() then
-                        local tag = veh:getModData().de_event
-                        if tag and tags[tag] then
-                            removeVehicle(veh)
-                            removed = removed + 1
-                        end
-                    end
+                    removeVehicle(veh)
+                    removed = removed + 1
                 end
             end
         end
@@ -466,19 +465,21 @@ end
 function EH.cleanupEvent(x, y, z, objects)
     if not objects then return end
 
-    local vehicles, vehicleTags = {}, {}
+    local vehicles = {}        -- resolved by runtime id (works in-session)
+    local sweptPositions = {}  -- recorded positions to proximity-sweep
     local zombieCount = 0
 
     for _, objData in ipairs(objects) do
         if objData.type == "vehicle" then
-            -- Look the vehicle up first: a player may have driven it somewhere
-            -- still loaded, in which case we can remove it wherever it is.
+            -- Prefer the id: it also catches a vehicle a player drove somewhere
+            -- still loaded. But the id is a runtime `short` that changes across
+            -- a restart, so fall back to a proximity sweep around the recorded
+            -- spawn position when it no longer resolves.
             local v = (objData.ref and objData.ref > 0) and getVehicleById(objData.ref) or nil
             if v then
                 vehicles[#vehicles + 1] = v
-            elseif isLoaded(objData.x, objData.y, objData.z) and objData.tag then
-                -- Loaded but the id didn't resolve: sweep by tag.
-                vehicleTags[objData.tag] = true
+            elseif isLoaded(objData.x, objData.y, objData.z) then
+                sweptPositions[#sweptPositions + 1] = objData
             end
 
         elseif objData.type == "zombies" then
@@ -499,19 +500,19 @@ function EH.cleanupEvent(x, y, z, objects)
         end
     end
 
-    -- Remove vehicles collected above, then zombies, then the tag sweep. The
-    -- sweep is the only grid walk, so it runs last.
+    -- Remove resolved vehicles first, then zombies, then proximity-sweep the
+    -- recorded positions whose ids no longer resolved. The sweep is the only
+    -- grid walk, so it runs last.
     for _, v in ipairs(vehicles) do
         removeVehicle(v)
     end
     cleanupZombies(x, y, zombieCount)
-    local hasVehicleTags = false
-    for _ in pairs(vehicleTags) do hasVehicleTags = true break end
-    if hasVehicleTags then
-        local swept = sweepTaggedVehicles(x, y, z, vehicleTags)
-        if swept > 0 then
-            DE.log("swept %d vehicle(s) by tag whose recorded ids no longer resolved", swept)
-        end
+    local swept = 0
+    for _, pos in ipairs(sweptPositions) do
+        swept = swept + removeVehicleNear(pos.x, pos.y, pos.z)
+    end
+    if swept > 0 then
+        DE.log("removed %d vehicle(s) by proximity whose recorded ids no longer resolved", swept)
     end
 end
 
