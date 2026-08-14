@@ -66,6 +66,17 @@ local EVENT = {
             "Base.Bag_ProtectiveCaseMilitary", "Base.WeldingMask", "Base.PropaneTank",
         }, 0, 0, { spread = 3, chance = 35 })
 
+        -- Supply crates: one proper military crate (moveable, real container)
+        -- and one carry-able duffel, so both container paths get exercised.
+        e:SpawnContainer("Base.Mov_MilitaryCrate", {
+            "Base.Shotgun", "Base.ShotgunShellsBox", "Base.AssaultRifle",
+            "Base.556Bullets", "Base.556Box", "Base.FirstAidKit",
+        }, 2, 0, { chance = 100 })
+
+        e:SpawnContainer("Base.Bag_Military", {
+            "Base.Pistol", "Base.9mmClip", "Base.Bandage",
+        }, -2, 0, { chance = 100 })
+
         e:SpawnZombies(6, "ArmyCamoGreen", 0, 0, { radius = 2 })
     end,
 }

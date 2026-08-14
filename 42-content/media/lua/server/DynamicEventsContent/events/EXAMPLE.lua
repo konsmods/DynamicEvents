@@ -133,6 +133,22 @@ local EVENT = {
             { spread = 3, chance = 35 }
         )
 
+        -- --- Loot container (airdrop-style crate/bag) -------------------------
+        -- e:SpawnContainer(containerType, lootItems, dx, dy, opts)
+        --   containerType: either a container item (ItemType = base:container)
+        --     e.g. "Base.Bag_Military", "Base.Bag_ALICEpack_Army", "Base.Toolbox",
+        --     "Base.Bag_ProtectiveCaseMilitary" — OR a moveable crate:
+        --     "Base.Mov_MilitaryCrate", "Base.Mov_MilitaryLocker"
+        --   opts: radius (position jitter), chance (per-item fill chance, default 100)
+        --
+        e:SpawnContainer("Base.Bag_Military",
+            { "Base.Pistol", "Base.9mmClip", "Base.Bandage", "Base.FirstAidKit" },
+            0, 1, { chance = 100 })
+
+        e:SpawnContainer("Base.Mov_MilitaryCrate",
+            { "Base.Shotgun", "Base.ShotgunShellsBox", "Base.Axe" },
+            1, 0, { chance = 100 })
+
         -- --- Fire, smoke, scorch marks --------------------------------------
         -- e:SpawnFire(count, dx, dy, opts)        -- opts: radius
         -- e:SpawnSmoke(count, dx, dy, opts)       -- opts: radius

@@ -104,9 +104,84 @@ local function fillContainer(container, items, chance)
     for _, itemName in ipairs(items) do
         if DE.chance(chance) then
             local item = instanceItem(itemName)
-            if item then container:AddItem(item) end
+            if item then
+                container:AddItem(item)
+                -- AddItem only updates the server's copy. The object itself is
+                -- already on the clients (transmitted empty), so sync each item
+                -- or clients keep seeing an empty container until reload.
+                -- No-op when not on the server.
+                sendAddItemToContainer(container, item)
+            end
         end
     end
+end
+
+-- Places a moveable (e.g. a crate or locker) through the vanilla moveable
+-- placement, so it gets a proper world object and a container created from the
+-- sprite's `container` property (e.g. Mov_MilitaryCrate -> "militarycrate").
+-- Returns its tracking record, or nil.
+local function spawnMoveableObject(sq, item, lootItems, chance)
+    local spriteName = item:getWorldSprite()
+    if not spriteName then return nil end
+
+    local moveProps = ISMoveableSpriteProps.new(spriteName)
+    if not moveProps or not moveProps.isMoveable then
+        DE.warn("'%s' has no moveable definition (sprite '%s')",
+            item:getFullType(), tostring(spriteName))
+        return nil
+    end
+
+    local obj = DE.guard("spawnMoveable " .. item:getFullType(), function()
+        return moveProps:placeMoveableInternal(sq, item, spriteName)
+    end)
+    if not obj then return nil end
+
+    local container = obj:getContainerByIndex(0)
+    if container then
+        fillContainer(container, lootItems, chance or 100)
+    else
+        DE.warn("moveable '%s' placed but has no container (sprite '%s' lacks a container property)",
+            item:getFullType(), spriteName)
+    end
+
+    return {
+        type = "moveable",
+        sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
+        sprite = spriteName,
+    }
+end
+
+-- Spawns a loot container and fills it with loot. Handles two kinds:
+--   * container items (ItemType = base:container) like "Base.Bag_Military" —
+--     dropped in the world and their ItemContainer filled.
+--   * moveables like "Base.Mov_MilitaryCrate" — placed via the vanilla moveable
+--     placement so they get a crate object with a real container.
+-- Returns its tracking record, or nil.
+function EH.spawnContainer(x, y, z, containerType, lootItems, chance)
+    local sq = containerType and squareAt(x, y, z)
+    if not sq then return nil end
+
+    local item = instanceItem(containerType)
+    if not item then return nil end
+
+    if instanceof(item, "Moveable") then
+        return spawnMoveableObject(sq, item, lootItems, chance)
+    end
+
+    local container = item:getItemContainer()
+    if not container then
+        DE.warn("'%s' is not a container item; cannot spawn loot container", containerType)
+        return nil
+    end
+
+    sq:AddWorldInventoryItem(item, 0.5, 0.5, 0)
+    fillContainer(container, lootItems, chance or 100)
+
+    return {
+        type = "item",
+        sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
+        itemType = containerType,
+    }
 end
 
 function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex, tag)
@@ -283,6 +358,27 @@ local function cleanupOne(objData)
     removeFromSquare(objData.sqx, objData.sqy, objData.sqz, makeMatcher(objData))
 end
 
+-- Removes a placed moveable (a tile object) by its sprite name, following the
+-- vanilla pickup removal pattern (RemoveTileObject + transmit). Moveables are
+-- added with AddSpecialObject, not FileObject, so they need this path rather
+-- than the plain removeFromSquare used for items and decorative sprites.
+local function cleanupMoveable(objData)
+    local c = cell()
+    local sq = c and c:getGridSquare(objData.sqx, objData.sqy, objData.sqz)
+    if not sq then return end
+
+    local objects = sq:getObjects()
+    for i = objects:size() - 1, 0, -1 do
+        local obj = objects:get(i)
+        if obj and obj:getSprite() and obj:getSprite():getName() == objData.sprite then
+            if isClient() then sq:transmitRemoveItemFromSquare(obj) end
+            if isServer() then sq:transmitRemoveItemFromSquareOnClients(obj) end
+            sq:RemoveTileObject(obj)
+            return
+        end
+    end
+end
+
 -- Removes up to `count` loaded zombies within a radius of the event site.
 -- Zombies lose whatever identity we give them the moment their chunk unloads
 -- (the engine virtualizes them, dropping modData tags and reassigning online
@@ -394,7 +490,11 @@ function EH.cleanupEvent(x, y, z, objects)
 
         else
             if isLoaded(objData.sqx, objData.sqy, objData.sqz) then
-                cleanupOne(objData)
+                if objData.type == "moveable" then
+                    cleanupMoveable(objData)
+                else
+                    cleanupOne(objData)
+                end
             end
         end
     end
@@ -490,6 +590,14 @@ function EventContext:SpawnLootScatter(items, dx, dy, opts)
     local wx, wy, o = place(self, dx, dy, opts)
     EH.merge(self._objects,
         EH.spawnLoot(wx, wy, self.z, items, o.spread or 2, o.chance or 30))
+end
+
+-- Spawns a loot-filled container (bag/case/toolbox) at an offset. opts.chance
+-- is the per-item fill chance (default 100, i.e. every item).
+function EventContext:SpawnContainer(containerType, lootItems, dx, dy, opts)
+    local wx, wy, o = place(self, dx, dy, opts)
+    local record = EH.spawnContainer(wx, wy, self.z, containerType, lootItems, o.chance)
+    if record then self._objects[#self._objects + 1] = record end
 end
 
 function EventContext:SpawnFire(count, dx, dy, opts)
