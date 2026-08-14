@@ -1,0 +1,6 @@
+name=Dynamic Event Content
+id=DynamicEventsContent
+description=Event definitions for the Dynamic Event Framework, given as Proof of Concept, not balanced for gameplay!
+require=DynamicEventsFramework
+versionMin=42.15
+modversion=0.1.0

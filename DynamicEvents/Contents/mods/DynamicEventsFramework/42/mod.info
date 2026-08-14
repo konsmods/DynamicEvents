@@ -1,0 +1,8 @@
+name=Dynamic Event Framework
+id=DynamicEventsFramework
+author=konkentrate
+description=A world event framework for Build 42. Events appear across Knox County as you play, telegraphed by sound and radio chatter.
+poster=poster.png
+icon=icon.png
+versionMin=42.15
+modversion=0.1.0
