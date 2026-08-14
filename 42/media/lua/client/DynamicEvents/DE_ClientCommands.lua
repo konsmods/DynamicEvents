@@ -18,52 +18,46 @@ local function send(command, args)
     sendClientCommand(player, "DynamicEvents", command, args or {})
 end
 
-function DE.Spawn(eventId, x, y, z, rot)
-    send("Spawn", { id = eventId, x = x, y = y, z = z, rot = rot })
+-- Command name → the argument names its wrapper accepts, in order. Must stay
+-- in sync with the HANDLERS table in DE_DebugCommands.lua.
+local COMMANDS = {
+    { name = "Spawn",         args = { "id", "x", "y", "z", "rot" } },
+    { name = "SpawnHere",     args = { "id" } },
+    { name = "SpawnRandom" },
+    { name = "Clean" },
+    { name = "ClearEvent",    args = { "uid" } },
+    { name = "ClearNearby",   args = { "radius" } },
+    { name = "ClearCooldowns" },
+    { name = "GoTo",          args = { "uid" } },
+    { name = "Pending" },
+    { name = "ListEvents" },
+    { name = "WhereAmI" },
+    { name = "VehicleInfo" },
+    { name = "CheckSpot",     args = { "radius" } },
+    { name = "Outfits",       args = { "keyword" } },
+    { name = "Info" },
+    { name = "SchedulerInfo" },
+}
+
+for _, cmd in ipairs(COMMANDS) do
+    local command, argNames = cmd.name, cmd.args
+    DE[command] = function(...)
+        local args = {}
+        for i = 1, (argNames and #argNames or 0) do
+            args[argNames[i]] = select(i, ...)
+        end
+        send(command, args)
+    end
 end
 
-function DE.SpawnHere(eventId)
-    send("SpawnHere", { id = eventId })
-end
+-- The server can't move a player directly in MP, so DE.GoTo asks us to do it.
+Events.OnServerCommand.Add(function(module, command, args)
+    if module ~= "DynamicEvents" or command ~= "Teleport" then return end
 
-function DE.SpawnRandom()
-    send("SpawnRandom", {})
-end
-
-function DE.Clean()
-    send("Clean", {})
-end
-
-function DE.CleanupNow()
-    send("CleanupNow", {})
-end
-
-function DE.ListEvents()
-    send("ListEvents", {})
-end
-
-function DE.WhereAmI()
-    send("WhereAmI", {})
-end
-
-function DE.VehicleInfo()
-    send("VehicleInfo", {})
-end
-
-function DE.CheckSpot(radius)
-    send("CheckSpot", { radius = radius })
-end
-
-function DE.Outfits(keyword)
-    send("Outfits", { keyword = keyword })
-end
-
-function DE.ToggleCleanup()
-    send("ToggleCleanup", {})
-end
-
-function DE.Info()
-    send("Info", {})
-end
+    local player = getSpecificPlayer(0)
+    if player and args and args.x and args.y then
+        player:teleportTo(args.x, args.y, args.z or 0)
+    end
+end)
 
 print("[DynamicEvents][CLI] client command shim loaded")

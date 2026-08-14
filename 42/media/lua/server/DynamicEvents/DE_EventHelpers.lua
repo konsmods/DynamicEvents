@@ -13,9 +13,33 @@ local function squareAt(x, y, z)
     return c and c:getOrCreateGridSquare(x, y, z)
 end
 
+-- True only when the chunk holding (x,y,z) is streamed in. On a server this
+-- goes through ServerMap, which returns nothing for unloaded chunks — that is
+-- how cleanup tells "already gone" apart from "can't reach it yet".
+local function isLoaded(x, y, z)
+    local c = getCell()
+    return c ~= nil and c:getGridSquare(x, y, z) ~= nil
+end
+
 -- ============================================================================
 -- Spawn helpers — all follow: EH.spawnX(x, y, z, ...) → tracked objects[]
 -- ============================================================================
+
+-- Drops one item on the ground. Returns its tracking record, or nil.
+function EH.spawnItem(x, y, z, itemType)
+    local sq = itemType and squareAt(x, y, z)
+    if not sq then return nil end
+
+    local item = instanceItem(itemType)
+    if not item then return nil end
+
+    sq:AddWorldInventoryItem(item, 0.3, 0.3, 0)
+    return {
+        type = "item",
+        sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
+        itemType = itemType,
+    }
+end
 
 function EH.spawnLoot(x, y, z, items, radius, chance)
     local objects = {}
@@ -24,18 +48,9 @@ function EH.spawnLoot(x, y, z, items, radius, chance)
 
     for dx = -r, r do
         for dy = -r, r do
-            local sq = squareAt(x + dx, y + dy, z)
-            if sq and DE.chance(pct) then
-                local itemType = DE.pick(items)
-                local item = instanceItem(itemType)
-                if item then
-                    sq:AddWorldInventoryItem(item, 0.3, 0.3, 0)
-                    objects[#objects + 1] = {
-                        type = "item",
-                        sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
-                        itemType = itemType,
-                    }
-                end
+            if DE.chance(pct) then
+                local record = EH.spawnItem(x + dx, y + dy, z, DE.pick(items))
+                if record then objects[#objects + 1] = record end
             end
         end
     end
@@ -75,7 +90,26 @@ function EH.spawnScorchMarks(x, y, z, radius)
     return objects
 end
 
-function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
+-- First of `partIds` that exists on the vehicle and has an item container.
+local function partContainer(vehicle, ...)
+    for i = 1, select("#", ...) do
+        local part = vehicle:getPartById((select(i, ...)))
+        local container = part and part:getItemContainer()
+        if container then return container end
+    end
+end
+
+local function fillContainer(container, items, chance)
+    if not container or not items then return end
+    for _, itemName in ipairs(items) do
+        if DE.chance(chance) then
+            local item = instanceItem(itemName)
+            if item then container:AddItem(item) end
+        end
+    end
+end
+
+function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex, tag)
     local objects = {}
     local sq = squareAt(x, y, z)
     if not sq then return objects end
@@ -100,37 +134,19 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
             vehicle:updateSkin()
         end
 
-        local vId = 0
-        local ok, result = pcall(vehicle.getId, vehicle)
-        if ok then
-            vId = result
-        else
-            DE.warn("vehicle:getId() failed for %s", vehicleType)
-        end
-        DE.dbg("spawned vehicle id=%d type=%s at (%d, %d, %d)", vId, vehicleType, x, y, z)
-        objects[#objects + 1] = { type = "vehicle", ref = vId, x = x, y = y, z = z }
-
-        local storage = vehicle:getPartById("TruckBed") or vehicle:getPartById("Trunk")
-        if storage and storage:getItemContainer() and lootItems then
-            local container = storage:getItemContainer()
-            for _, itemName in ipairs(lootItems) do
-                if DE.chance(40) then
-                    local item = instanceItem(itemName)
-                    if item then container:AddItem(item) end
-                end
-            end
+        -- Tag as well as record the id: ids don't always survive (or arrive),
+        -- and the tag lets cleanup find the vehicle by sweeping the area.
+        if tag then
+            DE.guard("tag vehicle", function() vehicle:getModData().de_event = tag end)
         end
 
-        local gloveBox = vehicle:getPartById("GloveBox")
-        if gloveBox and gloveBox:getItemContainer() and lootItems then
-            local gContainer = gloveBox:getItemContainer()
-            for _, itemName in ipairs(lootItems) do
-                if DE.chance(20) then
-                    local item = instanceItem(itemName)
-                    if item then gContainer:AddItem(item) end
-                end
-            end
-        end
+        local vId = vehicle:getId()
+        DE.dbg("spawned vehicle id=%d type=%s tag=%s at (%d, %d, %d)",
+            vId, vehicleType, tostring(tag), x, y, z)
+        objects[#objects + 1] = { type = "vehicle", ref = vId, tag = tag, x = x, y = y, z = z }
+
+        fillContainer(partContainer(vehicle, "TruckBed", "Trunk"), lootItems, 40)
+        fillContainer(partContainer(vehicle, "GloveBox"), lootItems, 20)
 
         local engine = vehicle:getPartById("Engine")
         if engine then engine:setCondition(DE.rand(0, 15)) end
@@ -144,9 +160,38 @@ function EH.spawnVehicle(x, y, z, vehicleType, lootItems, direction, skinIndex)
     return objects
 end
 
+-- Spawns zombies near the site and returns how many were actually spawned.
+-- They are NOT tracked individually: zombies lose whatever identity we give
+-- them the moment their chunk unloads (the engine virtualizes them, dropping
+-- modData tags and reassigning online ids). Cleanup instead removes the same
+-- number of loaded zombies from around the site.
 function EH.spawnZombies(x, y, z, count, radius, outfit)
     local r = radius or 2
-    addZombiesInOutfitArea(x - r, y - r, x + r, y + r, z, count or 3, outfit, nil)
+    local spawnedCount = 0
+
+    -- NOT addZombiesInOutfitArea: that resolves squares through
+    -- IsoCell.getInstance(), which isn't the live cell on a dedicated server,
+    -- so it logs "No IsoSquare selected. Cannot spawn." and returns nothing.
+    -- RandomizedWorldBase takes an explicit square and is what the vanilla
+    -- road stories use, so it works server-side.
+    local rwb = getWorld():getRandomizedWorldBase()
+    if not rwb then
+        DE.warn("no RandomizedWorldBase available; cannot spawn zombies at (%d, %d, %d)", x, y, z)
+        return 0
+    end
+
+    -- One at a time so they scatter across the radius the way the old
+    -- area-based call did.
+    for _ = 1, (count or 3) do
+        local sq = squareAt(x + DE.rand(-r, r), y + DE.rand(-r, r), z)
+        local spawned = sq and DE.guard("spawnZombies", function()
+            return rwb:addZombiesOnSquare(1, outfit, nil, sq)
+        end)
+        if spawned then spawnedCount = spawnedCount + spawned:size() end
+    end
+
+    DE.dbg("spawned %d zombies at (%d, %d, %d)", spawnedCount, x, y, z)
+    return spawnedCount
 end
 
 function EH.playSound(x, y, z, soundName)
@@ -160,32 +205,28 @@ function EH.playSound(x, y, z, soundName)
     end)
 end
 
-function EH.spawnFire(x, y, z, count)
+-- Scatters `count` fire/smoke sources within one tile of (x, y, z).
+local function scatterEffect(label, count, x, y, z, start)
     local c = cell()
     if not c then return end
-    for i = 1, (count or 1) do
-        local fx, fy = x + DE.rand(-1, 1), y + DE.rand(-1, 1)
-        local sq = squareAt(fx, fy, z)
+    for _ = 1, count do
+        local sq = squareAt(x + DE.rand(-1, 1), y + DE.rand(-1, 1), z)
         if sq then
-            DE.guard("spawnFire", function()
-                IsoFireManager.StartFire(c, sq, true, 100, 200)
-            end)
+            DE.guard(label, function() start(c, sq) end)
         end
     end
 end
 
+function EH.spawnFire(x, y, z, count)
+    scatterEffect("spawnFire", count or 1, x, y, z, function(c, sq)
+        IsoFireManager.StartFire(c, sq, true, 100, 200)
+    end)
+end
+
 function EH.spawnSmoke(x, y, z, count)
-    local c = cell()
-    if not c then return end
-    for i = 1, (count or 2) do
-        local sx, sy = x + DE.rand(-1, 1), y + DE.rand(-1, 1)
-        local sq = squareAt(sx, sy, z)
-        if sq then
-            DE.guard("spawnSmoke", function()
-                IsoFireManager.StartSmoke(c, sq, true, 100, 200)
-            end)
-        end
-    end
+    scatterEffect("spawnSmoke", count or 2, x, y, z, function(c, sq)
+        IsoFireManager.StartSmoke(c, sq, true, 100, 200)
+    end)
 end
 
 -- ============================================================================
@@ -193,81 +234,183 @@ end
 -- ============================================================================
 
 function EH.merge(target, source)
-    if not source then return end
+    if not source then return target end
     for i = 1, #source do
-        table.insert(target, source[i])
+        target[#target + 1] = source[i]
     end
+    return target
 end
 
 -- ============================================================================
 -- Cleanup
 -- ============================================================================
 
-local function cleanupOne(objData)
+-- Removes the topmost object on (x,y,z) that `matches`, if any.
+local function removeFromSquare(x, y, z, matches)
     local c = cell()
-    if not c then return end
+    local sq = c and c:getGridSquare(x, y, z)
+    if not sq then return end
 
-    if objData.type == "item" then
-        local sq = c:getGridSquare(objData.sqx, objData.sqy, objData.sqz)
-        if sq then
-            for i = sq:getObjects():size() - 1, 0, -1 do
-                local obj = sq:getObjects():get(i)
-                if instanceof(obj, "IsoWorldInventoryObject") then
-                    local invItem = obj:getItem()
-                    if invItem and invItem:getFullType() == objData.itemType then
-                        sq:transmitRemoveItemFromSquare(obj)
-                        break
-                    end
-                end
-            end
-        end
-    elseif objData.type == "sprite" then
-        local sq = c:getGridSquare(objData.sqx, objData.sqy, objData.sqz)
-        if sq then
-            for i = sq:getObjects():size() - 1, 0, -1 do
-                local obj = sq:getObjects():get(i)
-                if obj and obj:getSprite() and obj:getSprite():getName() == objData.sprite then
-                    sq:transmitRemoveItemFromSquare(obj)
-                    break
-                end
-            end
+    local objects = sq:getObjects()
+    for i = objects:size() - 1, 0, -1 do
+        local obj = objects:get(i)
+        if obj and matches(obj) then
+            sq:transmitRemoveItemFromSquare(obj)
+            return
         end
     end
 end
 
+local MATCHERS = {
+    item = function(objData)
+        return function(obj)
+            if not instanceof(obj, "IsoWorldInventoryObject") then return false end
+            local invItem = obj:getItem()
+            return invItem ~= nil and invItem:getFullType() == objData.itemType
+        end
+    end,
+    sprite = function(objData)
+        return function(obj)
+            local sprite = obj:getSprite()
+            return sprite ~= nil and sprite:getName() == objData.sprite
+        end
+    end,
+}
+
+local function cleanupOne(objData)
+    local makeMatcher = MATCHERS[objData.type]
+    if not makeMatcher then return end
+    removeFromSquare(objData.sqx, objData.sqy, objData.sqz, makeMatcher(objData))
+end
+
+-- Removes up to `count` loaded zombies within a radius of the event site.
+-- Zombies lose whatever identity we give them the moment their chunk unloads
+-- (the engine virtualizes them, dropping modData tags and reassigning online
+-- ids), so we can't match specific survivors after a player leaves and returns.
+-- We do know how many the event spawned, and they stay near the site, so
+-- sweeping the area and removing that many is close enough.
+local ZOMBIE_CLEANUP_RADIUS = 20
+
+local function cleanupZombies(x, y, count)
+    if not count or count <= 0 then return end
+    if not DE.Config.cleanupZombies then return end
+
+    local list = cell() and cell():getZombieList()
+    if not list then return end
+
+    local radiusSq = ZOMBIE_CLEANUP_RADIUS * ZOMBIE_CLEANUP_RADIUS
+    local doomed = {}
+    for i = 0, list:size() - 1 do
+        local zed = list:get(i)
+        if zed then
+            local dx, dy = zed:getX() - x, zed:getY() - y
+            if dx * dx + dy * dy <= radiusSq then
+                doomed[#doomed + 1] = zed
+                if #doomed >= count then break end
+            end
+        end
+    end
+
+    for _, zed in ipairs(doomed) do
+        DE.guard("cleanupZombie", function()
+            zed:removeFromWorld()
+            zed:removeFromSquare()
+        end)
+    end
+
+    DE.dbg("cleaned up %d of %d spawned zombie(s)", #doomed, count)
+end
+
+-- The convoy event's vehicles reach about +/-15 tiles from the site centre
+-- (+/-12 spacing plus vehicle length), which is the worst case this needs to
+-- find. 15 keeps the grid at 31x31 (~960 squares) instead of 51x51 (~2600).
+local VEHICLE_SWEEP_RADIUS = 15
+
+-- Clearing always runs server-side (it is an admin action), so there is no
+-- client path here: detach the vehicle from the world, then delete it from the
+-- save so it does not reappear on reload.
+local function removeVehicle(v)
+    DE.guard("cleanupVehicle world", function() v:removeFromWorld() end)
+    DE.guard("cleanupVehicle perm", function() v:permanentlyRemove() end)
+end
+
+-- Fallback for vehicles whose recorded id no longer resolves: sweep the site
+-- for vehicles carrying one of this event's tags. Catches ids that were never
+-- assigned at spawn time or were reassigned since.
+local function sweepTaggedVehicles(x, y, z, tags)
+    local c = getCell()
+    if not c then return 0 end
+
+    local seen, removed = {}, 0
+    for dx = -VEHICLE_SWEEP_RADIUS, VEHICLE_SWEEP_RADIUS do
+        for dy = -VEHICLE_SWEEP_RADIUS, VEHICLE_SWEEP_RADIUS do
+            local sq = c:getGridSquare(x + dx, y + dy, z)
+            local veh = sq and sq:getVehicleContainer()
+            if veh then
+                local id = veh:getId()
+                if not seen[id] then
+                    seen[id] = true
+                    if veh:hasModData() then
+                        local tag = veh:getModData().de_event
+                        if tag and tags[tag] then
+                            removeVehicle(veh)
+                            removed = removed + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return removed
+end
+
+-- Removes everything an event left behind. Clearing requires admin presence,
+-- so the site is streamed in; anything not reachable from here is left to the
+-- game. Returns nothing.
 function EH.cleanupEvent(x, y, z, objects)
-    DE.dbg("cleanupEvent at (%d,%d,%d) with %d objects", x, y, z, objects and #objects or 0)
     if not objects then return end
 
-    -- Collect all vehicles first, then remove — prevents ID map corruption.
-    local vehicles = {}
+    local vehicles, vehicleTags = {}, {}
+    local zombieCount = 0
+
     for _, objData in ipairs(objects) do
-        if objData.type == "vehicle" and objData.ref and objData.ref > 0 then
-            local v = getVehicleById(objData.ref)
+        if objData.type == "vehicle" then
+            -- Look the vehicle up first: a player may have driven it somewhere
+            -- still loaded, in which case we can remove it wherever it is.
+            local v = (objData.ref and objData.ref > 0) and getVehicleById(objData.ref) or nil
             if v then
                 vehicles[#vehicles + 1] = v
-                DE.log("  vehicle id=%d captured", objData.ref)
-            else
-                DE.warn("  vehicle id=%d NOT FOUND", objData.ref)
+            elseif isLoaded(objData.x, objData.y, objData.z) and objData.tag then
+                -- Loaded but the id didn't resolve: sweep by tag.
+                vehicleTags[objData.tag] = true
             end
-        end
-    end
 
-    for _, v in ipairs(vehicles) do
-        if isClient() then
-            local player = getSpecificPlayer(0)
-            if player then
-                sendClientCommand(player, "vehicle", "remove", { vehicle = v:getId() })
-            end
+        elseif objData.type == "zombies" then
+            zombieCount = zombieCount + (objData.count or 0)
+
+        -- Legacy per-zombie records (pre-count) are ignored: cleanup is by
+        -- count now, and these carry no square to anchor a removal on.
+        elseif objData.type == "zombie" then
+
         else
-            DE.guard("cleanupVehicle world", function() v:removeFromWorld() end)
-            DE.guard("cleanupVehicle perm", function() v:permanentlyRemove() end)
+            if isLoaded(objData.sqx, objData.sqy, objData.sqz) then
+                cleanupOne(objData)
+            end
         end
     end
 
-    for _, objData in ipairs(objects) do
-        if objData.type ~= "vehicle" then
-            cleanupOne(objData)
+    -- Remove vehicles collected above, then zombies, then the tag sweep. The
+    -- sweep is the only grid walk, so it runs last.
+    for _, v in ipairs(vehicles) do
+        removeVehicle(v)
+    end
+    cleanupZombies(x, y, zombieCount)
+    local hasVehicleTags = false
+    for _ in pairs(vehicleTags) do hasVehicleTags = true break end
+    if hasVehicleTags then
+        local swept = sweepTaggedVehicles(x, y, z, vehicleTags)
+        if swept > 0 then
+            DE.log("swept %d vehicle(s) by tag whose recorded ids no longer resolved", swept)
         end
     end
 end
@@ -281,11 +424,12 @@ DE.EventHelpers = EH
 local EventContext = {}
 EventContext.__index = EventContext
 
-function EventContext.new(x, y, z, rot)
+function EventContext.new(x, y, z, rot, uid)
     return setmetatable({
         _objects = {},
         x = x, y = y, z = z,
         rot = rot or 0,
+        uid = uid,   -- owning event's uid; stamped onto spawned zombies
     }, EventContext)
 end
 
@@ -305,64 +449,63 @@ function EventContext:_worldPos(dx, dy, radius)
            self.y + math.floor(dx * sinA + dy * cosA + 0.5)
 end
 
-function EventContext:SpawnVehicle(vehicleType, dx, dy, opts)
+-- Every Spawn* method resolves (dx, dy) + opts.radius into world coords the
+-- same way, so do it in one place and hand back a normalised opts table.
+local function place(self, dx, dy, opts)
     opts = opts or {}
     local wx, wy = self:_worldPos(dx, dy, opts.radius)
-    local spawned = EH.spawnVehicle(wx, wy, self.z, vehicleType,
-        opts.loot, opts.rot, opts.skin)
-    EH.merge(self._objects, spawned)
+    return wx, wy, opts
+end
+
+function EventContext:SpawnVehicle(vehicleType, dx, dy, opts)
+    local wx, wy, o = place(self, dx, dy, opts)
+    EH.merge(self._objects,
+        EH.spawnVehicle(wx, wy, self.z, vehicleType, o.loot, o.rot, o.skin, self.uid))
 end
 
 function EventContext:SpawnZombies(count, outfit, dx, dy, opts)
-    opts = opts or {}
-    local wx, wy = self:_worldPos(dx, dy, opts.radius)
-    local spread = opts.spread or 3
-    EH.spawnZombies(wx, wy, self.z, count, spread, outfit)
+    local wx, wy, o = place(self, dx, dy, opts)
+    local spawned = EH.spawnZombies(wx, wy, self.z, count, o.spread or 3, outfit) or 0
+    if spawned <= 0 then return end
+
+    -- Accumulate into a single count record, not one per zombie. Cleanup can't
+    -- find individual zombies after they've been virtualized, so it just
+    -- removes this many from around the site.
+    for i = 1, #self._objects do
+        if self._objects[i].type == "zombies" then
+            self._objects[i].count = self._objects[i].count + spawned
+            return
+        end
+    end
+    self._objects[#self._objects + 1] = { type = "zombies", count = spawned }
 end
 
 function EventContext:SpawnItem(itemType, dx, dy, opts)
-    opts = opts or {}
-    local wx, wy = self:_worldPos(dx, dy, opts.radius)
-    local sq = squareAt(wx, wy, self.z)
-    if sq then
-        local item = instanceItem(itemType)
-        if item then
-            sq:AddWorldInventoryItem(item, 0.3, 0.3, 0)
-            self._objects[#self._objects + 1] = {
-                type = "item",
-                sqx = wx, sqy = wy, sqz = self.z,
-                itemType = itemType,
-            }
-        end
-    end
+    local wx, wy = place(self, dx, dy, opts)
+    local record = EH.spawnItem(wx, wy, self.z, itemType)
+    if record then self._objects[#self._objects + 1] = record end
 end
 
 function EventContext:SpawnLootScatter(items, dx, dy, opts)
-    opts = opts or {}
-    local wx, wy = self:_worldPos(dx, dy, opts.radius)
-    local radius = opts.spread or 2
-    local chance = opts.chance or 30
+    local wx, wy, o = place(self, dx, dy, opts)
     EH.merge(self._objects,
-        EH.spawnLoot(wx, wy, self.z, items, radius, chance))
+        EH.spawnLoot(wx, wy, self.z, items, o.spread or 2, o.chance or 30))
 end
 
 function EventContext:SpawnFire(count, dx, dy, opts)
-    opts = opts or {}
-    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local wx, wy = place(self, dx, dy, opts)
     EH.spawnFire(wx, wy, self.z, count)
 end
 
 function EventContext:SpawnSmoke(count, dx, dy, opts)
-    opts = opts or {}
-    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local wx, wy = place(self, dx, dy, opts)
     EH.spawnSmoke(wx, wy, self.z, count)
 end
 
 function EventContext:SpawnScorch(dx, dy, opts)
-    opts = opts or {}
-    local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    local wx, wy, o = place(self, dx, dy, opts)
     EH.merge(self._objects,
-        EH.spawnScorchMarks(wx, wy, self.z, opts.spread or 1))
+        EH.spawnScorchMarks(wx, wy, self.z, o.spread or 1))
 end
 
 DE.EventContext = EventContext

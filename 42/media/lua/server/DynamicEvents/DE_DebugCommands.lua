@@ -2,23 +2,22 @@ if isClient() then return end
 
 DE = DE or {}
 
--- Helper: get player from arg or fall back to getSpecificPlayer(0)
-local function getPlayer(override)
-    return override or getSpecificPlayer(0)
-end
-
-local function announceCoords(def, x, y, z, player)
-    local msg = string.format("Spawned %s at (%d, %d, %d)", def.name or def.id, x, y, z)
-    DE.log(msg)
-    local p = getPlayer(player)
-    if p then p:Say(msg) end
-end
-
 -- ============================================================================
 -- Debug commands. Each accepts an optional `player` arg so they can be called
 -- by OnClientCommand with the requesting admin's player object.
 -- In SP / direct server console, player is nil and getSpecificPlayer(0) is used.
 -- ============================================================================
+
+local function getPlayer(override)
+    return override or getSpecificPlayer(0)
+end
+
+-- Log to the server console and echo to the requesting player, if any.
+local function report(p, fmt, ...)
+    local msg = select("#", ...) > 0 and string.format(fmt, ...) or fmt
+    DE.log(msg)
+    if p then p:Say(msg) end
+end
 
 function DE.Spawn(eventId, x, y, z, rot, player)
     local def = DE.EventManager.get(eventId)
@@ -27,45 +26,34 @@ function DE.Spawn(eventId, x, y, z, rot, player)
         return
     end
 
+    local p = getPlayer(player)
     if not x then
-        local p = getPlayer(player)
         if p then
             x, y, z = p:getX(), p:getY(), p:getZ()
         else
             DE.log("No player found, using first location")
-            x, y, z = def.locations[1].x, def.locations[1].y, def.locations[1].z or 0
+            local loc = def.locations[1]
+            x, y, z = loc.x, loc.y, loc.z or 0
         end
     end
     local sx, sy, sz = x, y or 0, z or 0
 
     local nearVeh = DE.EventManager.countVehiclesNear(sx, sy, sz)
     if nearVeh > 0 then
-        DE.log("[DE] WARNING: %d vehicle(s) already within range of (%d, %d) — forced spawn", nearVeh, sx, sy)
+        DE.log("WARNING: %d vehicle(s) already within range of (%d, %d) — forced spawn", nearVeh, sx, sy)
     end
 
-    announceCoords(def, sx, sy, sz, player)
-    DE.EventHelpers.playSound(sx, sy, sz, def.sound)
-
-    local ctx = DE.EventContext.new(sx, sy, sz, rot or def.rot or 0)
-    local ok, result = pcall(def.spawn, sx, sy, sz, ctx)
-    if not ok then
-        DE.err("%s spawn failed: %s", def.id, tostring(result))
-        result = ctx:objects()
+    -- Go through spawnOrQueue, not runSpawn: spawning at coordinates whose
+    -- chunk isn't loaded has to park, exactly like a scheduled event.
+    local result = DE.EventManager.spawnOrQueue(def, sx, sy, sz, rot)
+    if result == "queued" then
+        report(p, "Parked %s at (%d, %d, %d) — appears when that area loads", def.name or def.id, sx, sy, sz)
+    else
+        report(p, "Spawned %s at (%d, %d, %d)", def.name or def.id, sx, sy, sz)
     end
-    local objects = ctx:objects()
-    if result and type(result) == "table" and result ~= objects then
-        DE.EventHelpers.merge(objects, result)
-    end
-    DE.dbg("%s debug spawn returned %d tracked objects", def.id, #objects)
-    DE.EventManager.addActive(def.id, sx, sy, sz, objects)
 end
 
 function DE.SpawnHere(eventId, player)
-    local def = DE.EventManager.get(eventId)
-    if not def then
-        DE.log("Unknown event: %s", eventId)
-        return
-    end
     local p = getPlayer(player)
     if not p then DE.log("No player found"); return end
     DE.Spawn(eventId, p:getX(), p:getY(), p:getZ(), nil, player)
@@ -74,36 +62,195 @@ end
 function DE.SpawnRandom(player)
     local all = DE.EventManager.all()
     if #all == 0 then DE.log("No events registered"); return end
-    local def = all[DE.rand(1, #all)]
-    DE.Spawn(def.id, nil, nil, nil, nil, player)
+    DE.Spawn(DE.pick(all).id, nil, nil, nil, nil, player)
 end
 
+-- Lists everything the mod is holding: events standing in the world (with the
+-- uid needed to clear them) and spawns still parked waiting for their chunk.
 function DE.ListEvents(player)
     local p = getPlayer(player)
-    local active = DE.EventManager.getActiveEvents()
-    local msg
-    if #active == 0 then
-        msg = "No active events."
-    else
-        msg = string.format("%d active events: ", #active)
-        for _, ev in ipairs(active) do
-            local d = p and math.floor(math.sqrt((ev.x - p:getX())^2 + (ev.y - p:getY())^2)) or "?"
-            msg = msg .. string.format("%s at (%d,%d) ~%stiles  ", ev.id, ev.x, ev.y, tostring(d))
+    local px, py = nil, nil
+    if p then px, py = p:getX(), p:getY() end
+
+    local events = px and DE.EventManager.getActiveEventsNear(px, py)
+                       or DE.EventManager.getActiveEvents()
+    local parked = DE.EventManager.getParkedSpawns(px, py)
+
+    if #events == 0 and #parked == 0 then
+        report(p, "[DE] No tracked events.")
+        return
+    end
+
+    local function away(d)
+        return d and string.format(", ~%d tiles away", d) or ""
+    end
+
+    local now = DE.gameHours()
+    if #events > 0 then
+        DE.log("=== %d spawned event(s), nearest first ===", #events)
+        for _, ev in ipairs(events) do
+            DE.log("  %s — %s at (%d, %d, %d), %d objects, %.1fh old%s",
+                ev.uid, ev.id, ev.x, ev.y, ev.z, ev.objectCount,
+                now - (ev.spawnedAt or now), away(ev.distance))
         end
     end
-    DE.log(msg)
-    if p then p:Say(msg) end
+
+    if #parked > 0 then
+        DE.log("=== %d parked spawn(s), waiting for their chunk to load ===", #parked)
+        for _, ev in ipairs(parked) do
+            DE.log("  (no uid yet) — %s at (%d, %d, %d)%s",
+                tostring(ev.id), ev.x, ev.y, ev.z, away(ev.distance))
+        end
+    end
+
+    if #parked == 0 then
+        local n = events[1]
+        report(p, "[DE] %d spawned event(s); nearest is %s at (%d, %d)%s — full list in console",
+            #events, n.uid, n.x, n.y, n.distance and string.format(" ~%d tiles", n.distance) or "")
+    else
+        report(p, "[DE] %d spawned event(s), %d parked spawn(s) — full list in console",
+            #events, #parked)
+    end
+end
+
+-- Teleports the admin to a tracked event so its chunks stream in and it can
+-- actually be cleared. Without a uid, goes to the nearest one.
+function DE.GoTo(uid, player)
+    local p = getPlayer(player)
+    if not p then DE.log("No player"); return end
+
+    local data, target
+    if uid then
+        data = DE.EventManager.active[uid]
+        if not data then
+            report(p, "[DE] No tracked event with uid '%s'", tostring(uid))
+            return
+        end
+        target = uid
+    else
+        local nearest = DE.EventManager.getActiveEventsNear(p:getX(), p:getY())[1]
+        if not nearest then
+            report(p, "[DE] No tracked events to travel to")
+            return
+        end
+        data, target = DE.EventManager.active[nearest.uid], nearest.uid
+    end
+
+    report(p, "[DE] Teleporting to %s at (%d, %d, %d)", target, data.x, data.y, data.z)
+
+    if isServer() then
+        -- MP: the client owns the actual move.
+        sendServerCommand(p, "DynamicEvents", "Teleport",
+            { x = data.x, y = data.y, z = data.z })
+    else
+        p:teleportTo(data.x, data.y, data.z)
+    end
+end
+
+-- Clears every tracked event in the world. Only reaches events whose chunks
+-- are currently loaded, so an admin standing where nothing is streamed in will
+-- only clear what they can actually see.
+function DE.Clean(player)
+    local p = getPlayer(player)
+
+    -- Snapshot the uids first: clearEvent removes its entry from EM.active.
+    -- Clearing the current key is safe during `pairs`, but a snapshot makes
+    -- the intent unambiguous and guards against any cleanup that touches the
+    -- registry.
+    local uids = {}
+    for uid in pairs(DE.EventManager.active) do
+        uids[#uids + 1] = uid
+    end
+
+    local cleared = 0
+    for _, uid in ipairs(uids) do
+        if DE.EventManager.clearEvent(uid) then cleared = cleared + 1 end
+    end
+
+    report(p, "[DE] Cleared %d tracked event(s)", cleared)
+end
+
+-- Lists work parked against a square, waiting for that chunk to stream in.
+function DE.Pending(player)
+    local p = getPlayer(player)
+
+    local count = 0
+    DE.SquareQueue.forEach(function(entry)
+        count = count + 1
+        local d = ""
+        if p then
+            d = string.format(", ~%d tiles away",
+                math.floor(math.sqrt((entry.x - p:getX())^2 + (entry.y - p:getY())^2)))
+        end
+        DE.log("  %s at (%d, %d, %d)%s", entry.command, entry.x, entry.y, entry.z, d)
+    end)
+
+    if count == 0 then
+        report(p, "[DE] Nothing parked")
+    else
+        report(p, "[DE] %d item(s) parked waiting on chunk loads — details in console", count)
+    end
+end
+
+-- Clears one tracked event by uid. Its location becomes available again.
+-- Requires admin presence: only objects in loaded chunks can be removed.
+function DE.ClearEvent(uid, player)
+    local p = getPlayer(player)
+    if not uid then
+        report(p, "[DE] Usage: DE.ClearEvent(\"convoy_crash_ki5_3\") — see DE.ListEvents()")
+        return
+    end
+
+    local data = DE.EventManager.active[uid]
+    if not data then
+        report(p, "[DE] No tracked event with uid '%s'", tostring(uid))
+        return
+    end
+
+    DE.log("Clearing '%s' (%d objects)", uid, data.objects and #data.objects or 0)
+    local ok, reason = DE.EventManager.clearEvent(uid)
+    if ok then
+        report(p, "[DE] Cleared %s", uid)
+    else
+        report(p, "[DE] %s: %s", uid, reason)
+    end
+end
+
+-- Clears every tracked event within `radius` tiles of the caller (default 100).
+function DE.ClearNearby(radius, player)
+    local p = getPlayer(player)
+    if not p then DE.log("No player"); return end
+
+    local r = radius or 100
+    local cleared = 0
+    for _, ev in ipairs(DE.EventManager.getActiveEventsNear(p:getX(), p:getY())) do
+        if ev.distance <= r then
+            if DE.EventManager.clearEvent(ev.uid) then
+                DE.log("Cleared '%s' at (%d, %d), ~%d tiles away", ev.uid, ev.x, ev.y, ev.distance)
+                cleared = cleared + 1
+            end
+        end
+    end
+
+    report(p, "[DE] Cleared %d event(s) within %d tiles", cleared, r)
+end
+
+-- Resets every event type's cooldown, making them immediately eligible again.
+-- Clearing an event does not do this: the cooldown is a separate throttle from
+-- whether the event is still standing in the world.
+function DE.ClearCooldowns(player)
+    local p = getPlayer(player)
+    DE.EventManager.clearCooldowns()
+    report(p, "[DE] Cleared all event cooldowns")
 end
 
 function DE.CheckSpot(radius, player)
     local p = getPlayer(player)
     if not p then DE.log("No player"); return end
-    local x, y, z = p:getX(), p:getY(), p:getZ()
+
     local r = radius or DE.Config.minDistanceFromVehicles or 15
-    local count = DE.EventManager.countVehiclesNear(x, y, z, r)
-    local msg = string.format("[DE] %d vehicle(s) within %d tiles of you", count, r)
-    DE.log(msg)
-    if p then p:Say(msg) end
+    local count = DE.EventManager.countVehiclesNear(p:getX(), p:getY(), p:getZ(), r)
+    report(p, "[DE] %d vehicle(s) within %d tiles of you", count, r)
 end
 
 function DE.VehicleInfo(player)
@@ -111,166 +258,151 @@ function DE.VehicleInfo(player)
     if not p then DE.log("No player"); return end
     local sq = p:getSquare()
     if not sq then DE.log("No square"); return end
-    local ok, msg = pcall(function()
-        -- B42: IsoGridSquare has no getVehicles(); a square maps to at most one
-        -- vehicle via getVehicleContainer().
-        local v = sq:getVehicleContainer()
-        if not v then
-            p:Say("[DE] No vehicle on your square")
-            return
-        end
-        local id = 0
-        pcall(function() id = v:getId() end)
-        local md = nil
-        pcall(function() md = v:getModData().de_key end)
-        local script = nil
-        pcall(function() script = v:getScriptName() end)
-        local txt = string.format("[DE] id=%d key=%s script=%s", id, tostring(md), script or "?")
-        DE.log(txt)
-        p:Say(txt)
-    end)
-    if not ok then
-        DE.warn("VehicleInfo failed: %s", tostring(msg))
-        p:Say("[DE] VehicleInfo error — check console")
+
+    -- B42: a square maps to at most one vehicle, via getVehicleContainer().
+    local v = sq:getVehicleContainer()
+    if not v then
+        report(p, "[DE] No vehicle on your square")
+        return
     end
+
+    local modData = v:hasModData() and v:getModData() or nil
+    report(p, "[DE] id=%d event=%s script=%s",
+        v:getId(), tostring(modData and modData.de_event), v:getScriptName() or "?")
 end
 
 function DE.WhereAmI(player)
     local p = getPlayer(player)
     if not p then DE.log("No player"); return end
-    local msg = string.format("You are at (%d, %d, %d)", p:getX(), p:getY(), p:getZ())
-    DE.log(msg)
-    p:Say(msg)
+    report(p, "You are at (%d, %d, %d)", p:getX(), p:getY(), p:getZ())
 end
 
-function DE.CleanupNow(player)
-    local p = getPlayer(player)
-    if not DE.Config.eventCleanup then
-        DE.log("eventCleanup is disabled, nothing to expire")
-        if p then p:Say("[DE] Cleanup is OFF (EventCleanup=false)") end
-        return
-    end
-
-    local now = DE.gameHours()
-    local toExpire = {}
-    for id, data in pairs(DE.EventManager.active) do
-        local def = DE.EventManager.get(data.typeId)
-        local lifetime = (def and def.lifetimeHours) or 48
-        if now - data.spawnedAt >= lifetime then
-            toExpire[#toExpire + 1] = { id = id, data = data, def = def, lifetime = lifetime }
-        end
-    end
-
-    for _, info in ipairs(toExpire) do
-        DE.log("Expiring '%s' (lifetime %.0fh, spawned %.1fh ago)",
-            info.id, info.lifetime, now - info.data.spawnedAt)
-        if info.def and info.def.cleanup then
-            DE.guard(info.id .. " cleanup", function()
-                info.def.cleanup(info.data.x, info.data.y, info.data.z, info.data.objects)
-            end)
-        end
-        DE.EventManager.removeActive(info.id)
-    end
-
-    if #toExpire == 0 then
-        DE.log("No events ready for expiry")
-    end
-    if p then p:Say(string.format("[DE] Cleaned up %d expired events", #toExpire)) end
-end
 
 function DE.Outfits(keyword, player)
     local p = getPlayer(player)
     local kw = keyword and string.lower(keyword)
-    DE.log("=== Male outfits ===")
-    local male = getAllOutfits(false)
-    for i = 0, male:size() - 1 do
-        local name = male:get(i)
-        if not kw or string.find(string.lower(name), kw) then
-            DE.log("  %s", name)
-        end
-    end
-    DE.log("=== Female outfits ===")
-    local female = getAllOutfits(true)
-    for i = 0, female:size() - 1 do
-        local name = female:get(i)
-        if not kw or string.find(string.lower(name), kw) then
-            DE.log("  %s", name)
-        end
-    end
-    local msg = kw and "[DE] Outfits matching '" .. kw .. "' dumped to console"
-                   or "[DE] Outfits dumped to console"
-    if p then p:Say(msg) end
-end
 
-function DE.Clean(player)
-    local p = getPlayer(player)
-    local ids = {}
-    for id in pairs(DE.EventManager.active) do
-        table.insert(ids, id)
-    end
-
-    for _, id in ipairs(ids) do
-        local data = DE.EventManager.active[id]
-        if data then
-            local def = DE.EventManager.get(data.typeId)
-            DE.log("Force-cleaning '%s' (%d objects)", id, data.objects and #data.objects or 0)
-            if def and def.cleanup then
-                DE.guard(id .. " cleanup", function()
-                    def.cleanup(data.x, data.y, data.z, data.objects)
-                end)
+    for _, group in ipairs({ { label = "Male", female = false }, { label = "Female", female = true } }) do
+        DE.log("=== %s outfits ===", group.label)
+        local outfits = getAllOutfits(group.female)
+        for i = 0, outfits:size() - 1 do
+            local name = outfits:get(i)
+            if not kw or string.find(string.lower(name), kw, 1, true) then
+                DE.log("  %s", name)
             end
-            DE.EventManager.removeActive(id)
         end
     end
 
-    if p then p:Say(string.format("[DE] Force-cleaned all %d events", #ids)) end
-    DE.log("Force-cleaned %d events", #ids)
+    if p then
+        p:Say(kw and ("[DE] Outfits matching '" .. kw .. "' dumped to console")
+                  or "[DE] Outfits dumped to console")
+    end
 end
 
-function DE.ToggleCleanup(player)
-    local p = getPlayer(player)
-    DE.Config.eventCleanup = not DE.Config.eventCleanup
-    local msg = string.format("EventCleanup set to: %s", tostring(DE.Config.eventCleanup))
-    DE.log(msg)
-    if p then p:Say(msg) end
-end
 
 function DE.Info(player)
-    local p = getPlayer(player)
-
     DE.log("=== DynamicEvents Info ===")
     DE.log("Version: %s", DE.VERSION)
+
     DE.log("Config:")
-    for k, v in pairs(DE.Config) do
-        DE.log("  %s = %s", k, tostring(v))
-    end
-    DE.log("Registered events: %d", DE.EventManager.count())
-    for _, def in ipairs(DE.EventManager.all()) do
-        local locs = def.locations and #def.locations or 0
-        local used = 0
-        local usedLocs = DE.EventManager.usedLocations[def.id]
-        if usedLocs then
-            for _ in pairs(usedLocs) do used = used + 1 end
-        end
-        DE.log("  %s — weight=%d, locations=%d/%d used, cooldown=%dh, lifetime=%dh",
-            def.id, def.weight or 10, used, locs, def.cooldownHours or 24, def.lifetimeHours or 48)
-    end
-    local active = DE.EventManager.getActiveEvents()
-    DE.log("Active events: %d", #active)
-    for _, ev in ipairs(active) do
-        DE.log("  %s at (%d, %d, %d)", ev.id, ev.x, ev.y, ev.z)
+    for _, opt in ipairs(DE.CONFIG_SPEC) do
+        DE.log("  %s = %s", opt.key, tostring(DE.Config[opt.key]))
     end
 
+    DE.log("Registered events: %d", DE.EventManager.count())
+    for _, def in ipairs(DE.EventManager.all()) do
+        DE.log("  %s — weight=%d, locations=%d, cooldown=%dh",
+            def.id, def.weight, def.locations and #def.locations or 0, def.cooldownHours)
+    end
+
+    local active = DE.EventManager.getActiveEvents()
+    DE.log("Tracked events: %d (permanent until cleared)", #active)
+    for _, ev in ipairs(active) do
+        DE.log("  %s — %s at (%d, %d, %d), %d objects", ev.uid, ev.id, ev.x, ev.y, ev.z, ev.objectCount)
+    end
+
+    local p = getPlayer(player)
     if p then p:Say("[DE] Full mod info dumped to console") end
 end
 
-DE.dbg("debug console: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.ListEvents, DE.WhereAmI, DE.VehicleInfo, DE.Clean, DE.CleanupNow, DE.Outfits, DE.ToggleCleanup, DE.Info")
+-- Reports what the scheduler is doing right now: whether it is armed, when the
+-- next fire is due, and why each registered event is or isn't eligible.
+function DE.SchedulerInfo(player)
+    local p = getPlayer(player)
+    local now = DE.gameHours()
+    local sched = DE.Scheduler or {}
+
+    DE.log("=== Scheduler ===")
+    DE.log("Enabled: %s", tostring(DE.Config.enabled))
+    DE.log("World age: %.2f hours (day %.2f)", now, now / 24)
+    DE.log("Interval: %.2f in-game hours", DE.Config.intervalHours or 1)
+    DE.log("Grace period: %.2f hours", DE.Config.gracePeriodHours or 0)
+    DE.log("Restored save: %s", tostring(DE.EventManager._wasRestored))
+
+    if sched.nextFireHour then
+        local remaining = sched.nextFireHour - now
+        if remaining <= 0 then
+            DE.log("Next fire: DUE (overdue by %.2f hours)", -remaining)
+        else
+            DE.log("Next fire: in %.2f in-game hours", remaining)
+        end
+    else
+        DE.log("Next fire: not armed (waiting for OnGameStart)")
+    end
+
+    DE.log("Pending spawns (warning delay): %d", #DE._pendingSpawns)
+
+    DE.log("=== Event eligibility right now ===")
+    local days = DE.gameDays()
+    for _, def in ipairs(DE.EventManager.all()) do
+        local reasons = {}
+        if not DE.EventManager.isEnabledInSandbox(def) then
+            reasons[#reasons + 1] = "sandbox toggle off"
+        end
+        if DE.EventManager.isOnCooldown(def.id) then
+            reasons[#reasons + 1] = string.format("cooldown until %.2fh", DE.EventManager.cooldowns[def.id])
+        end
+        if days < (def.minDaysSurvived or 0) then
+            reasons[#reasons + 1] = "needs day " .. (def.minDaysSurvived or 0)
+        end
+        if not DE.EventManager.dependenciesMet(def) then
+            reasons[#reasons + 1] = "missing dependency"
+        end
+
+        if #reasons == 0 then
+            DE.log("  %s: ELIGIBLE", def.id)
+        else
+            DE.log("  %s: not eligible — %s", def.id, table.concat(reasons, ", "))
+        end
+    end
+
+    report(p, "[DE] Scheduler info dumped to console")
+end
 
 -- ============================================================================
 -- Client command forwarding: clients can't run server-side functions directly.
--- The client shim in media/lua/client/DE_ClientCommands.lua forwards these;
--- we execute them here. Only admins may use them.
+-- The client shim in media/lua/client/DynamicEvents/DE_ClientCommands.lua
+-- forwards these; we execute them here. Only admins may use them.
 -- ============================================================================
+
+local HANDLERS = {
+    Spawn         = function(p, a) DE.Spawn(a.id, a.x, a.y, a.z, a.rot, p) end,
+    SpawnHere     = function(p, a) DE.SpawnHere(a.id, p) end,
+    SpawnRandom   = function(p)    DE.SpawnRandom(p) end,
+    Clean         = function(p)    DE.Clean(p) end,
+    ClearEvent    = function(p, a) DE.ClearEvent(a.uid, p) end,
+    ClearNearby   = function(p, a) DE.ClearNearby(a.radius, p) end,
+    ClearCooldowns = function(p)   DE.ClearCooldowns(p) end,
+    GoTo          = function(p, a) DE.GoTo(a.uid, p) end,
+    Pending       = function(p)    DE.Pending(p) end,
+    ListEvents    = function(p)    DE.ListEvents(p) end,
+    WhereAmI      = function(p)    DE.WhereAmI(p) end,
+    VehicleInfo   = function(p)    DE.VehicleInfo(p) end,
+    CheckSpot     = function(p, a) DE.CheckSpot(a.radius, p) end,
+    Outfits       = function(p, a) DE.Outfits(a.keyword, p) end,
+    Info          = function(p)    DE.Info(p) end,
+    SchedulerInfo = function(p)    DE.SchedulerInfo(p) end,
+}
 
 local function isPlayerAuthorized(p)
     if not p then return false end
@@ -282,36 +414,21 @@ end
 Events.OnClientCommand.Add(function(module, command, player, args)
     if module ~= "DynamicEvents" then return end
 
-    if not isPlayerAuthorized(player) then
-        DE.warn("DE: '%s' rejected — player not admin", command)
+    local handler = HANDLERS[command]
+    if not handler then
+        DE.warn("unknown client command '%s'", tostring(command))
         return
     end
 
-    args = args or {}
-
-    if command == "Spawn" then
-        DE.Spawn(args.id, args.x, args.y, args.z, args.rot, player)
-    elseif command == "SpawnHere" then
-        DE.SpawnHere(args.id, player)
-    elseif command == "SpawnRandom" then
-        DE.SpawnRandom(player)
-    elseif command == "Clean" then
-        DE.Clean(player)
-    elseif command == "CleanupNow" then
-        DE.CleanupNow(player)
-    elseif command == "ListEvents" then
-        DE.ListEvents(player)
-    elseif command == "WhereAmI" then
-        DE.WhereAmI(player)
-    elseif command == "VehicleInfo" then
-        DE.VehicleInfo(player)
-    elseif command == "CheckSpot" then
-        DE.CheckSpot(args.radius, player)
-    elseif command == "Outfits" then
-        DE.Outfits(args.keyword, player)
-    elseif command == "ToggleCleanup" then
-        DE.ToggleCleanup(player)
-    elseif command == "Info" then
-        DE.Info(player)
+    if not isPlayerAuthorized(player) then
+        DE.warn("'%s' rejected — player not admin", command)
+        return
     end
+
+    handler(player, args or {})
 end)
+
+DE.dbg("debug console — spawn: DE.Spawn, DE.SpawnHere, DE.SpawnRandom | "
+    .. "admin: DE.ListEvents, DE.GoTo(uid), DE.ClearEvent(uid), DE.ClearNearby(radius), "
+    .. "DE.Clean, DE.Pending, DE.ClearCooldowns | "
+    .. "info: DE.WhereAmI, DE.VehicleInfo, DE.CheckSpot, DE.Outfits, DE.Info, DE.SchedulerInfo")

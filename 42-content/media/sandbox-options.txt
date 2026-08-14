@@ -1,0 +1,17 @@
+VERSION = 1,
+
+option DynamicEventsContent.ConvoyCrashKI5
+{
+    type = boolean,
+    default = true,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_ConvoyCrashKI5,
+}
+
+option DynamicEventsContent.ExampleEvent
+{
+    type = boolean,
+    default = false,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_ExampleEvent,
+}

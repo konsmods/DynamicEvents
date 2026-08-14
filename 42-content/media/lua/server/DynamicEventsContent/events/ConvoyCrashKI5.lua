@@ -15,13 +15,15 @@ local cargoLoot = {
 local EVENT = {
     id             = "convoy_crash_ki5",
     name           = "KI5 Military Convoy Crash",
+    enabledVar     = "DynamicEventsContent.ConvoyCrashKI5",
     weight         = 14,
     sound          = "MetaAssaultRifle1",
-    cooldownHours  = 48,
-    lifetimeHours  = 42,
+    cooldownHours  = 0,
     minDaysSurvived = 1,
 
-    dependencies = { "82oshkoshM911", "86oshkoshP19A", "92amgeneralM998Burnt", "67commandoBurnt" },
+    -- Mod IDs, not vehicle script names: the "Burnt" suffix belongs to the
+    -- vehicle variant (Base.92amgeneralM998Burnt), not to the mod that adds it.
+    dependencies = { "82oshkoshM911", "86oshkoshP19A", "92amgeneralM998", "67commando" },
 
     locations       = {
         { name = "Muldraugh highway",   x = 10715, y = 9834,  z = 0, rot = 0 },
@@ -34,7 +36,7 @@ local EVENT = {
 
     radio = {
         interval = 30,
-        range    = 200,
+        range    = 500,
         messages = {
             "MAYDAY! Military convoy under fire near %s! Requesting immediate backup!",
             "Emergency! Convoy ambushed at %s — heavy casualties!",
@@ -53,15 +55,15 @@ local EVENT = {
         end
 
         e:SpawnLootScatter({
-            "Base.Pistol", "Base.9mmClip", "Base.9mmBulletsMolds",
+            "Base.Pistol", "Base.9mmClip", "Base.Bullets9mm", "Base.Bullets9mmBox",
             "Base.Shotgun", "Base.ShotgunShellsBox", "Base.AssaultRifle",
-            "Base.223Bullets", "Base.223Box", "Base.556Bullets", "Base.556Box",
-            "Base.BulletsBox", "Base.HuntingKnife", "Base.Axe",
+            "Base.556Bullets", "Base.556Box", "Base.556Clip",
+            "Base.HuntingKnife", "Base.Axe",
             "Base.Bag_ALICE_BeltSus", "Base.Bag_ALICEpack_Army",
             "Base.Bag_Military", "Base.Bandage", "Base.BandageDirty",
             "Base.FirstAidKit", "Base.Pills", "Base.PillsAntiDep",
             "Base.AlcoholBandage", "Base.SutureNeedle", "Base.Tweezers",
-            "Base.MilitaryBackpack", "Base.WeldingMask", "Base.PropaneTank",
+            "Base.Bag_ProtectiveCaseMilitary", "Base.WeldingMask", "Base.PropaneTank",
         }, 0, 0, { spread = 3, chance = 35 })
 
         e:SpawnZombies(6, "ArmyCamoGreen", 0, 0, { radius = 2 })

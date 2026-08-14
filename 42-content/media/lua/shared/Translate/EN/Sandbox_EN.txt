@@ -1,0 +1,9 @@
+Sandbox_EN = {
+    Sandbox_DynamicEventsContent = "Dynamic Events - Events",
+
+    Sandbox_DynamicEventsContent_ConvoyCrashKI5 = "KI5 Military Convoy Crash",
+    Sandbox_DynamicEventsContent_ConvoyCrashKI5_tooltip = "A wrecked military convoy with weapon and medical loot, guarded by soldier zombies. Requires the KI5 military vehicle mods; skipped automatically if they are not loaded.",
+
+    Sandbox_DynamicEventsContent_ExampleEvent = "Example Event (template)",
+    Sandbox_DynamicEventsContent_ExampleEvent_tooltip = "The template event shipped as a reference for making your own. Off by default; only useful for testing.",
+}

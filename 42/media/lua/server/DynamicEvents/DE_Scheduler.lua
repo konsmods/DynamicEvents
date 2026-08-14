@@ -1,80 +1,58 @@
+-- Clients load media/lua/server/ too, so bail out there: spawning and state
+-- are server-authoritative, and running this loop on a client would both
+-- duplicate work and touch server-only modules it never loaded.
+if isClient() then return end
+
 DE = DE or {}
 
-local CHECK_INTERVAL_TICKS = 100
-local ticksSinceLastCheck = 0
-local gameStartHour = nil
+-- Upkeep (pending spawns, radio, state save) is cheap but pointless to run
+-- every tick. The event fire check is folded into the same pass because a
+-- sub-second difference is irrelevant for an hours-scale interval.
+local UPKEEP_INTERVAL_TICKS = 10
 
-local function getSandboxOption(key, default)
-    if not SandboxVars.DynamicEvents then return default end
-    local val = SandboxVars.DynamicEvents[key]
-    return val ~= nil and val or default
-end
+-- Exposed so DE_DebugCommands can report what the scheduler is waiting for.
+DE.Scheduler = {
+    gameStartHour = nil,  -- in-game hour the world started / was loaded
+    nextFireHour  = nil,  -- in-game hour the next event is due
+}
+
+local tickCount = 0
+local initialized = false
 
 local function refreshConfig()
-    DE.Config.enabled              = getSandboxOption("Enabled", true)
-    DE.Config.maxActive            = getSandboxOption("MaxActiveEvents", 3)
-    DE.Config.minTimeBetweenEvents = getSandboxOption("MinHoursBetweenEvents", 1.0)
-    DE.Config.eventChance          = getSandboxOption("EventChance", 50)
-    DE.Config.gracePeriodHours     = getSandboxOption("GracePeriodHours", 0)
-    DE.Config.eventCleanup         = getSandboxOption("EventCleanup", true)
-    DE.Config.minDistanceBetweenEvents = getSandboxOption("MinDistanceBetweenEvents", 20)
-    DE.Config.minDistanceFromVehicles  = getSandboxOption("MinDistanceFromVehicles", 15)
-    DE.Config.debug                = getSandboxOption("Debug", false)
-end
-
-local function isEventEnabled(id)
-    if not SandboxVars.DynamicEvents then return true end
-    local toggles = SandboxVars.DynamicEvents.EventToggles
-    if not toggles then return true end
-    return toggles[id] ~= false
-end
-
-local function doSpawn(def, x, y, z, rot)
-    DE.log("%s appeared at (%d, %d, %d)", def.name or def.id, x, y, z)
-    DE.EventHelpers.playSound(x, y, z, def.sound)
-
-    local ctx = DE.EventContext.new(x, y, z, rot or def.rot or 0)
-    local ok, result = pcall(def.spawn, x, y, z, ctx)
-    if not ok then
-        DE.err("%s spawn failed: %s", def.id, tostring(result))
-        return ctx:objects()
+    local vars = SandboxVars.DynamicEvents
+    for _, opt in ipairs(DE.CONFIG_SPEC) do
+        local val = vars and vars[opt.sandbox]
+        -- Explicit nil check: `false` is a valid value for the boolean options.
+        if val == nil then val = opt.default end
+        DE.Config[opt.key] = val
     end
-    local objects = ctx:objects()
-    if result and type(result) == "table" and result ~= objects then
-        DE.EventHelpers.merge(objects, result)
-    end
-    DE.dbg("%s spawn returned %d tracked objects", def.id, #objects)
-    return objects
 end
 
 DE._pendingSpawns = DE._pendingSpawns or {}
 
+-- Warning delays are short and purely cosmetic (radio chatter before the
+-- event lands); an unloaded site no longer needs special handling here,
+-- because spawnOrQueue parks it.
 local function processPendingSpawns()
     local now = DE.gameHours()
-    local toRemove = {}
-    for i, pending in ipairs(DE._pendingSpawns) do
+    for i = #DE._pendingSpawns, 1, -1 do
+        local pending = DE._pendingSpawns[i]
         if now >= pending.atTime then
-            local objects = doSpawn(pending.def, pending.x, pending.y, pending.z, pending.rot)
-            DE.EventManager.addActive(pending.def.id, pending.x, pending.y, pending.z, objects)
-            toRemove[i] = true
+            table.remove(DE._pendingSpawns, i)
+            DE.EventManager.spawnOrQueue(pending.def, pending.x, pending.y, pending.z, pending.rot)
         end
     end
-    local filtered = {}
-    for i, p in ipairs(DE._pendingSpawns) do
-        if not toRemove[i] then
-            filtered[#filtered + 1] = p
-        end
-    end
-    DE._pendingSpawns = filtered
 end
 
 local function scheduleSpawn(def, x, y, z, delay, rot)
     if not delay or delay <= 0 then
-        local objects = doSpawn(def, x, y, z, rot)
-        DE.EventManager.addActive(def.id, x, y, z, objects)
+        DE.EventManager.spawnOrQueue(def, x, y, z, rot)
         return
     end
 
+    -- `delay` is in in-game seconds; convert to the hour units used by
+    -- DE.gameHours() so the pending check below compares like with like.
     local atTime = DE.gameHours() + (delay / 3600)
     DE._pendingSpawns[#DE._pendingSpawns + 1] = {
         def = def,
@@ -85,135 +63,101 @@ local function scheduleSpawn(def, x, y, z, delay, rot)
     DE.dbg("scheduled spawn for '%s' in %d seconds (at hour %.2f)", def.id, delay, atTime)
 end
 
-local function tryFireEvent()
-    refreshConfig()
-
+-- Fires one event if the interval has elapsed: pick a weighted-random event
+-- type, then a random location it can actually use, and queue the spawn. The
+-- timer is re-armed afterwards either way, so a round where nothing was
+-- eligible (or every location was blocked) simply retries next interval.
+local function fireDueEvent()
     if not DE.Config.enabled then return end
-
-    if not DE.EventManager._wasRestored then
-        if gameStartHour and DE.gameHours() - gameStartHour < (DE.Config.gracePeriodHours or 0) then
-            return
-        end
-    end
-
-    if DE.EventManager.getActiveCount() >= DE.Config.maxActive then
-        DE.dbg("max active events reached (%d)", DE.Config.maxActive)
-        return
-    end
-
-    if not DE.chance(DE.Config.eventChance) then
-        DE.dbg("event chance roll failed")
-        return
-    end
-
-    local eligible = DE.EventManager.getEligible()
-    if #eligible == 0 then
-        DE.dbg("no eligible events (all on cooldown or day requirements not met)")
-        return
-    end
-
-    local filtered = {}
-    for _, def in ipairs(eligible) do
-        if isEventEnabled(def.id) then
-            filtered[#filtered + 1] = def
-        end
-    end
-
-    if #filtered == 0 then
-        DE.dbg("all eligible events are disabled in sandbox")
-        return
-    end
-
-    local skipUsed = not DE.Config.eventCleanup
-
-    local attempts = {}
-    for _, def in ipairs(filtered) do
-        attempts[#attempts + 1] = def
-    end
-
-    while #attempts > 0 do
-        local idx = DE.rand(1, #attempts)
-        local def = attempts[idx]
-        table.remove(attempts, idx)
-
-        local location = DE.EventManager.pickRandomLocation(def, skipUsed)
-        if location then
-            local lz = location.z or 0
-            if DE.EventManager.isLocationOccupied(location.x, location.y, lz) then
-                DE.dbg("'%s' location '%s' too close to an active event, skipping", def.id, location.name)
-            elseif DE.EventManager.isVehicleNear(location.x, location.y, lz) then
-                DE.dbg("'%s' location '%s' too close to an existing vehicle, skipping", def.id, location.name)
-            else
-                DE.log("firing event '%s' at (%d, %d, %d)", def.id, location.x, location.y, lz)
-                DE.EventManager.markLocationUsed(def.id, location)
-
-                local delay = 0
-                if def.warning and def.warning.delay then
-                    delay = def.warning.delay
-                end
-
-                scheduleSpawn(def, location.x, location.y, lz, delay,
-                    location.rot or def.rot or 0)
-                DE.EventManager.startCooldown(def.id, def.cooldownHours)
-                return
-            end
-        elseif skipUsed then
-            DE.dbg("'%s' has no unused locations, skipping", def.id)
-        else
-            DE.warn("'%s' has no valid locations", def.id)
-        end
-    end
-
-    DE.dbg("no viable event/location combination found")
-end
-
-local function expireActiveEvents()
-    if not DE.Config.eventCleanup then return end
+    if not DE.Scheduler.nextFireHour or DE.gameHours() < DE.Scheduler.nextFireHour then return end
 
     local now = DE.gameHours()
-    local toExpire = {}
-    for id, data in pairs(DE.EventManager.active) do
-        local def = DE.EventManager.get(data.typeId)
-        local lifetime = (def and def.lifetimeHours) or 48
-        if now - data.spawnedAt >= lifetime then
-            toExpire[id] = data
+    local interval = DE.Config.intervalHours or 1
+    if interval <= 0 then interval = 1 end   -- a zero interval would fire constantly
+
+    local candidates = DE.EventManager.getEligible()
+    if #candidates == 0 then
+        DE.log("event roll due, but no eligible events (cooldown, day requirement, dependency or sandbox toggle)")
+    else
+        while #candidates > 0 do
+            local def, idx = DE.EventManager.pickWeighted(candidates)
+            if not def then break end
+            table.remove(candidates, idx)
+
+            local location, reason = DE.EventManager.pickSpawnableLocation(def)
+            if location then
+                local lz = location.z or 0
+                DE.log("firing event '%s' at (%d, %d, %d)", def.id, location.x, location.y, lz)
+
+                local delay = def.warning and def.warning.delay or 0
+                scheduleSpawn(def, location.x, location.y, lz, delay,
+                    location.rot or def.rot or 0)
+
+                DE.EventManager.startCooldown(def.id, def.cooldownHours)
+                break
+            end
+            DE.dbg("'%s' has no usable location right now (%s)", def.id, reason)
         end
     end
-    for id, data in pairs(toExpire) do
-        local def = DE.EventManager.get(data.typeId)
-        DE.log("event '%s' [%s] expired (lifetime %.0fh)", data.typeId, id, def and def.lifetimeHours or 48)
-        if def and def.cleanup then
-            DE.guard(id .. " cleanup", function()
-                def.cleanup(data.x, data.y, data.z, data.objects)
-            end)
-        end
-        DE.EventManager.removeActive(id)
+
+    DE.Scheduler.nextFireHour = now + interval
+end
+
+-- Initialise once the world is ready. We deliberately do NOT use
+-- Events.OnGameStart: on a dedicated server it fires before mod files load, so
+-- a handler registered in this file would never run. The tick loop is always
+-- registered, so we lazily initialise on the first tick where game time exists
+-- (which also covers single-player and a server reloading an old save).
+local function tryInit()
+    if initialized then return end
+    if not getGameTime() then return end
+
+    initialized = true
+    refreshConfig()
+
+    local startHour = DE.gameHours()
+    local restored = DE.EventManager.loadState()
+    DE.Scheduler.gameStartHour = startHour
+
+    local interval = DE.Config.intervalHours or 1
+    if restored then
+        -- Wait one full interval from now so a restart never fires an event
+        -- the moment the world comes back up.
+        DE.Scheduler.nextFireHour = DE.gameHours() + interval
+    else
+        -- Fresh world: wait out the grace period plus one interval before the
+        -- first event, then keep that cadence.
+        DE.Scheduler.nextFireHour = startHour + (DE.Config.gracePeriodHours or 0) + interval
+    end
+
+    if restored then
+        DE.log("scheduler started (restored %d active events)", DE.EventManager.getActiveCount())
+    else
+        DE.log("scheduler started (fresh)")
     end
 end
 
 local function onTick()
-    processPendingSpawns()
-    expireActiveEvents()
-    DE.EventManager.saveState()
-    ticksSinceLastCheck = ticksSinceLastCheck + 1
-    if ticksSinceLastCheck >= CHECK_INTERVAL_TICKS then
-        ticksSinceLastCheck = 0
-        tryFireEvent()
+    tickCount = tickCount + 1
+    tryInit()
+
+    -- Nothing expires on its own: events persist until an admin clears them.
+    -- SquareQueue.drain runs work whose chunk just streamed in, off the
+    -- LoadGridsquare callback itself.
+    if tickCount % UPKEEP_INTERVAL_TICKS == 0 then
+        -- Re-read sandbox options each pass: an admin can apply new settings
+        -- mid-game, and PZ updates the live SandboxVars table then.
+        refreshConfig()
+
+        DE.SquareQueue.drain()
+        processPendingSpawns()
+        fireDueEvent()
+        DE.broadcastRadios()
+        DE.EventManager.saveState()
     end
-    DE.broadcastRadios()
 end
 
 -- Register the tick loop immediately, not inside OnGameStart.
 -- On dedicated servers, OnGameStart can fire before mod files are loaded,
 -- so deferring registration there would never run the scheduler.
 Events.OnTick.Add(onTick)
-
-Events.OnGameStart.Add(function()
-    gameStartHour = DE.gameHours()
-    local restored = DE.EventManager.loadState()
-    if restored then
-        DE.log("scheduler started (restored %d active events)", DE.EventManager.getActiveCount())
-    else
-        DE.log("scheduler started (fresh)")
-    end
-end)

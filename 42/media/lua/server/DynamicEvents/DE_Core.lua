@@ -2,17 +2,27 @@ DE = DE or {}
 
 DE.VERSION = "0.1.0"
 
-DE.Config = {
-    enabled              = true,
-    maxActive            = 3,
-    minTimeBetweenEvents = 1.0,   -- in-game hours
-    eventChance          = 50,    -- percent chance per scheduler tick
-    gracePeriodHours     = 0,   -- hours after game start before first event
-    eventCleanup         = true,  -- false = locations are one-use, events never expire
-    minDistanceBetweenEvents = 20, -- tiles between event centers
-    minDistanceFromVehicles  = 15, -- tiles between event center and any existing vehicle
-    debug                = false,
+-- Single source of truth for tunables: DE.Config key, matching SandboxVars
+-- key, and the default used when the sandbox option is absent. The scheduler
+-- rebuilds DE.Config from this list on every upkeep pass (see refreshConfig in
+-- DE_Scheduler.lua), so admin changes to sandbox options apply mid-game.
+DE.CONFIG_SPEC = {
+    { key = "enabled",                  sandbox = "Enabled",                  default = true  },
+    { key = "intervalHours",            sandbox = "MinHoursBetweenEvents",    default = 1.0   }, -- in-game hours between events
+    { key = "gracePeriodHours",         sandbox = "GracePeriodHours",         default = 0     }, -- after game start
+    { key = "spawnMinDistance",         sandbox = "SpawnMinDistance",         default = 40    }, -- tiles: never materialise this close to a player
+    { key = "maxEventsPerArea",         sandbox = "MaxEventsPerArea",         default = 0     }, -- 0 = no cluster limit
+    { key = "areaRadius",               sandbox = "AreaRadius",               default = 300   }, -- tiles, for the cluster limit
+    { key = "minDistanceBetweenEvents", sandbox = "MinDistanceBetweenEvents", default = 20    }, -- tiles between event centers
+    { key = "minDistanceFromVehicles",  sandbox = "MinDistanceFromVehicles",  default = 15    }, -- tiles from any existing vehicle
+    { key = "cleanupZombies",           sandbox = "CleanupZombies",           default = true  }, -- remove event zombies when clearing
+    { key = "debug",                    sandbox = "Debug",                    default = false },
 }
+
+DE.Config = {}
+for _, opt in ipairs(DE.CONFIG_SPEC) do
+    DE.Config[opt.key] = opt.default
+end
 
 local function side()
     if isServer() then return "SRV"

@@ -11,6 +11,13 @@ local EVENT = {
     -- Required: display name
     name = "Example Event",
 
+    -- Optional: sandbox option that switches this event on and off, given as
+    -- a dotted SandboxVars path. Declare the matching option in this mod's
+    -- media/sandbox-options.txt and give it a label in
+    -- media/lua/shared/Translate/EN/Sandbox.json (and Sandbox_EN.txt).
+    -- Without this field the event is always eligible.
+    enabledVar = "DynamicEventsContent.ExampleEvent",
+
     -- Optional: default rotation in degrees (0=North, 90=East)
     -- Individual locations can override this with their own rot.
     rot = 0,
@@ -21,8 +28,12 @@ local EVENT = {
     -- Optional tuning (shown with defaults)
     weight         = 10,    -- higher = more likely to be chosen
     cooldownHours  = 48,    -- hours before this event can fire again
-    lifetimeHours  = 48,    -- hours before the event auto-expires
     minDaysSurvived = 0,    -- in-game days before this event is eligible
+    --
+    -- Events are permanent: once spawned they stay in the world like a vanilla
+    -- wreck, until an admin clears them with DE.ClearEvent / DE.ClearNearby.
+    -- A location is blocked while its event is still standing, and becomes
+    -- available again once cleared.
 
     -- Optional: sound effect played at the event location
     -- sound = "MetaShotgun1",
@@ -98,6 +109,11 @@ local EVENT = {
         -- Use .Outfits() in the console to list all available outfit names.
         -- Use .Outfits("army") to filter by keyword.
         --
+        -- Zombies are NOT tracked individually. On cleanup the mod removes the
+        -- same number of loaded zombies from around the site, when the "Remove
+        -- event zombies on cleanup" sandbox option is on. Zombies that wandered
+        -- off or were killed are left to the game.
+        --
         e:SpawnZombies(4, "ArmyCamoGreen", 0, 0, { radius = 3 })
 
         -- --- Single items ----------------------------------------------------
@@ -134,7 +150,11 @@ local EVENT = {
         -- return objects   -- merged into tracked objects automatically
     end,
 
-    -- cleanup is automatic — no need to define it
+    -- Cleanup is automatic — no need to define it.
+    --
+    -- If you do supply your own `cleanup = function(x, y, z, objects)`, it
+    -- replaces the default. Clearing requires admin presence, so only remove
+    -- objects in loaded chunks; anything out of reach is left to the game.
 }
 
 DE.EventManager.register(EVENT)
