@@ -5,12 +5,13 @@ description: After EVERY file edit in this project, run rsync to deploy the chan
 
 # Auto-sync changed files to PZ mods directory
 
-Project Zomboid loads mods from `~/Zomboid/mods/DynamicEvents/`, NOT from the git repository.
+Project Zomboid loads mods from `~/Zomboid/mods/`, NOT from the git repository.
 
-After EVERY edit to any file under `42/`, immediately run:
+After EVERY edit, rsync the affected mod folder(s) — there are two mods:
 
 ```bash
-rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/42/ ~/Zomboid/mods/DynamicEvents/42/
+rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/DynamicEventsFramework/ ~/Zomboid/mods/DynamicEventsFramework/
+rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/DynamicEventsContent/ ~/Zomboid/mods/DynamicEventsContent/
 ```
 
 This is mandatory. Do not ask the user for permission or remind them — just run it after every edit batch.

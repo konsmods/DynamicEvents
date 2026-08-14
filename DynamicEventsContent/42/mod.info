@@ -1,0 +1,6 @@
+name=Dynamic Event Framework - Content
+id=DynamicEventsContent
+description=Event definitions for the Dynamic Event Framework: the KI5 Military Convoy Crash. Requires the DynamicEventsFramework framework.
+require=DynamicEventsFramework
+versionMin=42.15
+modversion=0.1.0

@@ -1,0 +1,7 @@
+name=Dynamic Event Framework (DEF)
+id=DynamicEventsFramework
+description=A world event framework for Build 42. Events appear across Knox County as you play, telegraphed by sound and radio chatter, and stay until an admin clears them. Ships with the KI5 Military Convoy Crash.
+poster=poster.png
+versionMin=42.15
+icon=icon.png
+modversion=0.1.0

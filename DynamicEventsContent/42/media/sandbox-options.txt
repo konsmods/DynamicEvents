@@ -1,0 +1,41 @@
+VERSION = 1,
+
+option DynamicEventsContent.ConvoyCrashKI5
+{
+    type = boolean,
+    default = true,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_ConvoyCrashKI5,
+}
+
+option DynamicEventsContent.ExampleEvent
+{
+    type = boolean,
+    default = false,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_ExampleEvent,
+}
+
+option DynamicEventsContent.MilitaryAirdrop
+{
+    type = boolean,
+    default = true,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_MilitaryAirdrop,
+}
+
+option DynamicEventsContent.HumanitarianAirdrop
+{
+    type = boolean,
+    default = true,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_HumanitarianAirdrop,
+}
+
+option DynamicEventsContent.SimpleHorde
+{
+    type = boolean,
+    default = true,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_SimpleHorde,
+}

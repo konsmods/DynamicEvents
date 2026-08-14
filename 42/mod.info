@@ -1,7 +1,0 @@
-name=Dynamic Events
-id=DynamicEvents
-description=DayZ-style dynamic world events. Military convoy crashes, helicopter crash sites and train wrecks appear across Knox County while you play, telegraphed by sound and radio chatter.
-poster=poster.png
-versionMin=42.15
-icon=icon.png
-modversion=0.1.0

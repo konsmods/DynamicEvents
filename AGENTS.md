@@ -1,4 +1,4 @@
-# DynamicEvents — AI Assistant Guide
+# DynamicEventsFramework — AI Assistant Guide
 
 ## Critical: Deploy after every edit
 
@@ -6,29 +6,36 @@ PZ loads mods from `~/Zomboid/mods/`, NOT from the git repo. There are TWO mods:
 
 **After every file edit, run BOTH:**
 ```
-rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/42/ ~/Zomboid/mods/DynamicEvents/42/
-rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/42-content/ ~/Zomboid/mods/DynamicEventsContent/42/
+rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/DynamicEventsFramework/ ~/Zomboid/mods/DynamicEventsFramework/
+rsync -av --delete /home/top/Projects/Games/ProjectZomboid/DynamicEvents/DynamicEventsContent/ ~/Zomboid/mods/DynamicEventsContent/
 ```
 
 This is mandatory — never skip it. The game can't see changes without this sync.
 
+**To publish to Steam Workshop**, rsync the same two folders into the Workshop
+staging area (each also needs its own `workshop.txt` + `preview.png`):
+```
+rsync -av --delete DynamicEventsFramework/ ~/Zomboid/Workshop/DynamicEventsFramework/Contents/mods/DynamicEventsFramework/
+rsync -av --delete DynamicEventsContent/ ~/Zomboid/Workshop/DynamicEventsContent/Contents/mods/DynamicEventsContent/
+```
+
 ## Project structure
 
-- `42/` — **framework mod** (id `DynamicEvents`): core engine only, no events
-  - `42/media/lua/server/DynamicEvents/` — core framework (Core, EventManager, EventHelpers, Scheduler, Radio, DebugCommands)
-  - `42/media/sandbox-options.txt` — global sandbox options (page `DynamicEvents`)
+- `DynamicEventsFramework/` — **framework mod** (id `DynamicEventsFramework`): core engine only, no events
+  - `42/media/lua/server/DynamicEventsFramework/` — core framework (Core, EventManager, EventHelpers, Scheduler, Radio, DebugCommands)
+  - `42/media/sandbox-options.txt` — global sandbox options (page `DynamicEventsFramework`)
   - `42/media/lua/shared/Translate/EN/` — sandbox option labels (`Sandbox.json` + `Sandbox_EN.txt`)
-- `42-content/` — **content mod** (id `DynamicEventsContent`, `require=DynamicEvents`): individual event definitions
-  - `42-content/media/lua/server/DynamicEventsContent/events/` — event .lua files
-  - `42-content/media/sandbox-options.txt` — per-event on/off toggles (page `DynamicEventsContent`)
+- `DynamicEventsContent/` — **content mod** (id `DynamicEventsContent`, `require=DynamicEventsFramework`): individual event definitions
+  - `42/media/lua/server/DynamicEventsContent/events/` — event .lua files
+  - `42/media/sandbox-options.txt` — per-event on/off toggles (page `DynamicEventsContent`)
 
 ## Sandbox options
 
 Options are real sandbox options, declared in `media/sandbox-options.txt` and
-labelled in the `Translate/EN` files. Never assign `SandboxVars.DynamicEvents`
+labelled in the `Translate/EN` files. Never assign `SandboxVars.DynamicEventsFramework`
 from Lua — that overwrites what the server config set.
 
-`DE.CONFIG_SPEC` in `DE_Core.lua` maps each `SandboxVars.DynamicEvents.*` key to
+`DE.CONFIG_SPEC` in `DE_Core.lua` maps each `SandboxVars.DynamicEventsFramework.*` key to
 its `DE.Config` key and default; add new global options in both places.
 
 Per-event toggles are declared by the content mod, and the event points at one
@@ -104,10 +111,10 @@ Dead corpses (`IsoDeadBody`) in that radius are removed too. A custom
 
 ## Creating events
 
-Copy `42-content/media/lua/server/DynamicEventsContent/events/EXAMPLE.lua`, fill in:
+Copy `DynamicEventsContent/42/media/lua/server/DynamicEventsContent/events/EXAMPLE.lua`, fill in:
 - `id`, `name`, `locations` (required)
 - `rot` — default rotation, can be overridden per-location
-- `enabledVar` — sandbox toggle path; also add the option to `42-content/media/sandbox-options.txt`
+- `enabledVar` — sandbox toggle path; also add the option to `DynamicEventsContent/42/media/sandbox-options.txt`
 - `spawn = function(x, y, z, e)` — use `e:SpawnVehicle()`, `e:SpawnZombies()`, etc.
 - No `cleanup` needed, and no lifetime — events are permanent
 
@@ -120,7 +127,7 @@ from around the site.
 
 ## Server setup
 
-- Parent framework mod: `~/Zomboid/mods/DynamicEvents/`
+- Parent framework mod: `~/Zomboid/mods/DynamicEventsFramework/`
 - Content mod: `~/Zomboid/mods/DynamicEventsContent/`
 - Both listed in `~/Zomboid/Server/ZeroZomboid.ini` Mods line
 

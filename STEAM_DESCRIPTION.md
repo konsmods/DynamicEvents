@@ -1,0 +1,29 @@
+**Dynamic Event Framework (DEF)**
+
+Tired of the same empty roads and forests? Want more than just the Heli Event or Gunshots? You, my friend, are in the right place!
+
+Dynamic Event Framework is a world event framework for B42 with Multiplayer in mind. While you survive, stuff shows can happen across the map, not only on world creation: a military convoy ambushed on the highway, a heli that came down in the woods, and whatever else people cook up for it. Some events you will be able to hear, some will be announced on the radio, some will be hidden away in order to incetivise exploration!
+
+**What this framework provides:**
+- Scheduler - using the sandbox settings, we can set frequency of events, weights for certain events and cooldown timers to customize and balance the experience
+- Event Manager - due to engine limitations objects cannot spawn outside the player's render distance, so we circumvent that by queuing up event spawns (loot, vehicles, zombies, etc.) up until a player enters the required radius
+- Events can be telegraphed by sound (like the vanilla Heli) and/or emergency radio broadcasts so you can go looking on purpose
+- Full sandbox control: there are a lot more settings and I will add a lot more in the upcoming versions
+- Every event has its own on/off toggle, and each can carry optional mod dependencies (skipped automatically if you don't have them)
+- All spawns are tracked, so admins can list, jump to and clear any event
+- Permanent and persistent - events survive restarts and stay until an admin clears them (I would like in the future to have the scheduling system itself do the clearing for constant dynamic events happening at all times, this is an upcoming feature)
+
+**Check out:**
+- Dynamic Events Content mod - there you can find a few sample events I've created, as well as some documentation on making your own and admin commands for management
+
+**For modders:** events are plain Lua files. Copy `EXAMPLE.lua`, drop in your id, locations and a `spawn` function, and use the ready-made helpers — `SpawnVehicle`, `SpawnZombies`, `SpawnLootScatter`, `SpawnContainer`, fire, smoke, scorch marks. Cleanup, tracking and persistence are handled for you, you just describe whatever you can come up with!
+
+**Upcoming:**
+- Add the ability to use vanilla horde API to spawn hordes with a specific migration path within an event
+- Add the ability for automatic clean up of events, so new events can spawn in that location
+- Whatever might come to mind later :P
+
+## DISCLAIMER
+This mod is in the [ALPHA] stage as seen in the title. It is very much WIP and in early development, but I am looking forward to adding more features and doing optimization on it! If you would like to help in development, you can test and report bugs here. It is very much appreciated!
+
+If you like my mods or have cool ideas for new features do not hesitate to write!
