@@ -121,8 +121,8 @@ function DE.ListEvents(player)
     if #events > 0 then
         DE.log("=== %d spawned event(s), nearest first ===", #events)
         for _, ev in ipairs(events) do
-            DE.log("  %s — %s at (%d, %d, %d), %d objects, %.1fh old%s",
-                ev.uid, ev.id, ev.x, ev.y, ev.z, ev.objectCount,
+            DE.log("  %s — %s at (%d, %d, %d), %d-tile footprint, %d zombie(s), %.1fh old%s",
+                ev.uid, ev.id, ev.x, ev.y, ev.z, ev.radius, ev.zombies,
                 now - (ev.spawnedAt or now), away(ev.distance))
         end
     end
@@ -240,7 +240,7 @@ function DE.ClearEvent(uid, player)
         return
     end
 
-    DE.log("Clearing '%s' (%d objects)", uid, data.objects and #data.objects or 0)
+    DE.log("Clearing '%s' (%d-tile footprint)", uid, data.radius or 0)
     local ok, reason = DE.EventManager.clearEvent(uid)
     if not ok then
         report(p, "[DE] %s: %s", uid, reason)
@@ -302,9 +302,79 @@ function DE.VehicleInfo(player)
         return
     end
 
-    local modData = v:hasModData() and v:getModData() or nil
     report(p, "[DE] id=%d event=%s script=%s",
-        v:getId(), tostring(modData and modData.de_event), v:getScriptName() or "?")
+        v:getId(), tostring(DE.EventHelpers.tagOf(v)), v:getScriptName() or "?")
+end
+
+-- Dumps the event tag on everything on the player's square. The quick way to
+-- confirm tags are actually surviving a save/reload.
+function DE.TagHere(player)
+    local p = getPlayer(player)
+    if not p then DE.log("No player"); return end
+    local sq = p:getSquare()
+    if not sq then DE.log("No square"); return end
+
+    local EH = DE.EventHelpers
+    local found = 0
+
+    local veh = sq:getVehicleContainer()
+    if veh then
+        found = found + 1
+        DE.log("  vehicle id=%d — %s", veh:getId(), tostring(EH.tagOf(veh)))
+    end
+
+    local objects = sq:getObjects()
+    for i = 0, objects:size() - 1 do
+        local obj = objects:get(i)
+        local uid = obj and EH.ownerOf(obj)
+        if uid then
+            found = found + 1
+            local sprite = obj:getSprite()
+            DE.log("  %s (%s) — %s",
+                tostring(sprite and sprite:getName()), tostring(obj:getObjectName()), uid)
+        end
+    end
+
+    if found == 0 then
+        report(p, "[DE] Nothing on your square carries an event tag")
+    else
+        report(p, "[DE] %d tagged thing(s) on your square — details in console", found)
+    end
+end
+
+-- Removes tagged leftovers from events the manager no longer knows about —
+-- state lost, save rolled back, an event cleared while its chunk was unloaded.
+-- Anything still tracked is reported and left alone; clear it with DE.ClearEvent.
+function DE.Purge(radius, player)
+    local p = getPlayer(player)
+    if not p then DE.log("No player"); return end
+
+    local EH = DE.EventHelpers
+    local r = math.min(radius or 30, EH.MAX_SWEEP_RADIUS)
+    local px, py, pz = p:getX(), p:getY(), p:getZ()
+
+    local found = EH.findTags(px, py, pz, r)
+    local orphans, tracked, removed = 0, 0, 0
+
+    DE.log("=== Purge: tags within %d tiles of (%d, %d, %d) ===", r, px, py, pz)
+    for uid, count in pairs(found) do
+        if DE.EventManager.active[uid] then
+            tracked = tracked + 1
+            DE.log("  %s — %d object(s), still tracked, left alone", uid, count)
+        else
+            orphans = orphans + 1
+            local n = EH.cleanupByTag(px, py, pz, uid, r)
+            removed = removed + n
+            DE.log("  %s — orphaned, removed %d object(s)", uid, n)
+        end
+    end
+
+    if orphans == 0 and tracked == 0 then
+        report(p, "[DE] No event leftovers within %d tiles", r)
+    else
+        report(p, "[DE] Purged %d orphaned event(s) (%d objects); left %d tracked event(s) alone",
+            orphans, removed, tracked)
+    end
 end
 
 function DE.WhereAmI(player)
@@ -352,7 +422,8 @@ function DE.Info(player)
     local active = DE.EventManager.getActiveEvents()
     DE.log("Tracked events: %d (permanent until cleared)", #active)
     for _, ev in ipairs(active) do
-        DE.log("  %s — %s at (%d, %d, %d), %d objects", ev.uid, ev.id, ev.x, ev.y, ev.z, ev.objectCount)
+        DE.log("  %s — %s at (%d, %d, %d), %d-tile footprint, %d zombie(s)",
+            ev.uid, ev.id, ev.x, ev.y, ev.z, ev.radius, ev.zombies)
     end
 
     local p = getPlayer(player)
@@ -425,6 +496,8 @@ local HANDLERS = {
     ClearEvent    = function(p, a) DE.ClearEvent(a.uid, p) end,
     ClearNearby   = function(p, a) DE.ClearNearby(a.radius, p) end,
     ClearCooldowns = function(p)   DE.ClearCooldowns(p) end,
+    Purge         = function(p, a) DE.Purge(a.radius, p) end,
+    TagHere       = function(p)    DE.TagHere(p) end,
     GoTo          = function(p, a) DE.GoTo(a.uid, p) end,
     Pending       = function(p)    DE.Pending(p) end,
     ListEvents    = function(p)    DE.ListEvents(p) end,
@@ -462,5 +535,5 @@ end)
 
 DE.dbg("debug console — spawn: DE.Spawn, DE.SpawnHere, DE.SpawnRandom, DE.SpawnForce | "
     .. "admin: DE.ListEvents, DE.GoTo(uid), DE.ClearEvent(uid), DE.ClearNearby(radius), "
-    .. "DE.Clean, DE.Pending, DE.ClearCooldowns | "
-    .. "info: DE.WhereAmI, DE.VehicleInfo, DE.CheckSpot, DE.Outfits, DE.Info, DE.SchedulerInfo")
+    .. "DE.Clean, DE.Purge(radius), DE.Pending, DE.ClearCooldowns | "
+    .. "info: DE.WhereAmI, DE.VehicleInfo, DE.TagHere, DE.CheckSpot, DE.Outfits, DE.Info, DE.SchedulerInfo")

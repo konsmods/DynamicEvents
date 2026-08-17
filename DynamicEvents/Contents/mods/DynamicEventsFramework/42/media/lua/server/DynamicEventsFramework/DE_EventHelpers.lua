@@ -20,18 +20,75 @@ local function isLoaded(x, y, z)
 end
 
 -- ============================================================================
--- Spawn helpers — all follow: EH.spawnX(x, y, z, ...) → tracked objects[]
+-- Ownership tags
+--
+-- Every world thing an event creates carries its owning event's uid in modData.
+-- That tag is the identity cleanup goes by: the manager only remembers *where*
+-- an event is, and the sweep removes whatever inside that footprint is stamped
+-- with the uid. Nothing untagged is ever touched.
+--
+-- modData rides along with the object into the chunk save (IsoObject),
+-- the item save (InventoryItem) and the vehicle save (BaseVehicle), so the tag
+-- survives a restart where a runtime id or a square coordinate would not.
+--
+-- Zombies are the exception: they are pooled and virtualized (IsoZombie has
+-- resetForReuse), so a tag on one does not survive its chunk unloading. They
+-- stay tracked as a bare count — see cleanupZombies.
+-- ============================================================================
+
+local TAG_KEY = "de_uid"
+
+-- Vehicles carried this key before tags became the cleanup mechanism; still
+-- read so events spawned by an older version can still be cleared properly.
+local LEGACY_TAG_KEY = "de_event"
+
+function EH.tag(obj, uid)
+    if not obj or not uid then return end
+    DE.guard("tag object", function() obj:getModData()[TAG_KEY] = uid end)
+end
+
+-- The uid stamped on `obj`, or nil. Checks hasModData first on purpose:
+-- getModData() *creates* the table, and the cleanup sweep probes every object in
+-- the footprint — allocating (and then saving) a modData table for each one.
+function EH.tagOf(obj)
+    if not obj then return nil end
+    return DE.guard("read tag", function()
+        if not obj:hasModData() then return nil end
+        local md = obj:getModData()
+        return md[TAG_KEY] or md[LEGACY_TAG_KEY]
+    end)
+end
+
+-- Like tagOf, but for a world object also falls back to the item it wraps: a
+-- player who picks a dropped item up and puts it back down gets a fresh
+-- IsoWorldInventoryObject, and only the InventoryItem still carries the tag.
+function EH.ownerOf(obj)
+    local uid = EH.tagOf(obj)
+    if uid then return uid end
+    if instanceof(obj, "IsoWorldInventoryObject") then
+        return EH.tagOf(obj:getItem())
+    end
+    return nil
+end
+
+-- ============================================================================
+-- Spawn helpers — all follow: EH.spawnX(x, y, z, ..., uid) → tracked objects[]
+-- The trailing uid is the owning event; it is stamped onto whatever is created.
 -- ============================================================================
 
 -- Drops one item on the ground. Returns its tracking record, or nil.
-function EH.spawnItem(x, y, z, itemType)
+function EH.spawnItem(x, y, z, itemType, uid)
     local sq = itemType and squareAt(x, y, z)
     if not sq then return nil end
 
     local item = instanceItem(itemType)
     if not item then return nil end
 
-    sq:AddWorldInventoryItem(item, 0.3, 0.3, 0)
+    -- Tag the item as well as the world object: the item is the durable half,
+    -- it keeps the tag through a pick-up and re-drop.
+    EH.tag(item, uid)
+    EH.tag(sq:AddWorldInventoryItem(item, 0.3, 0.3, 0), uid)
+
     return {
         type = "item",
         sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
@@ -39,7 +96,7 @@ function EH.spawnItem(x, y, z, itemType)
     }
 end
 
-function EH.spawnLoot(x, y, z, items, radius, chance)
+function EH.spawnLoot(x, y, z, items, radius, chance, uid)
     local objects = {}
     local r = radius or 2
     local pct = chance or 30
@@ -47,7 +104,7 @@ function EH.spawnLoot(x, y, z, items, radius, chance)
     for dx = -r, r do
         for dy = -r, r do
             if DE.chance(pct) then
-                local record = EH.spawnItem(x + dx, y + dy, z, DE.pick(items))
+                local record = EH.spawnItem(x + dx, y + dy, z, DE.pick(items), uid)
                 if record then objects[#objects + 1] = record end
             end
         end
@@ -55,7 +112,7 @@ function EH.spawnLoot(x, y, z, items, radius, chance)
     return objects
 end
 
-function EH.spawnSprite(x, y, z, spriteName)
+function EH.spawnSprite(x, y, z, spriteName, uid)
     local objects = {}
     local sq = squareAt(x, y, z)
     if not sq then return objects end
@@ -64,6 +121,7 @@ function EH.spawnSprite(x, y, z, spriteName)
         local obj = IsoObject.new(sq, spriteName, "", false)
         if obj then
             sq:FileObject(obj)
+            EH.tag(obj, uid)
             objects[#objects + 1] = {
                 type = "sprite",
                 sqx = sq:getX(), sqy = sq:getY(), sqz = sq:getZ(),
@@ -74,14 +132,14 @@ function EH.spawnSprite(x, y, z, spriteName)
     return objects
 end
 
-function EH.spawnScorchMarks(x, y, z, radius)
+function EH.spawnScorchMarks(x, y, z, radius, uid)
     local objects = {}
     local r = radius or 1
     for dx = -r, r do
         for dy = -r, r do
             if math.abs(dx) + math.abs(dy) <= r + 1 then
                 local name = "floors_burnt_01_" .. DE.rand(1, 8)
-                EH.merge(objects, EH.spawnSprite(x + dx, y + dy, z, name))
+                EH.merge(objects, EH.spawnSprite(x + dx, y + dy, z, name, uid))
             end
         end
     end
@@ -113,7 +171,7 @@ end
 
 -- Place a moveable (crate/locker) via the vanilla moveable placement, so it gets
 -- a real world object and a container from the sprite's `container` property.
-local function spawnMoveableObject(sq, item, lootItems, chance)
+local function spawnMoveableObject(sq, item, lootItems, chance, uid)
     local spriteName = item:getWorldSprite()
     if not spriteName then return nil end
 
@@ -128,6 +186,12 @@ local function spawnMoveableObject(sq, item, lootItems, chance)
         return moveProps:placeMoveableInternal(sq, item, spriteName)
     end)
     if not obj then return nil end
+
+    -- Only the placed object is tagged, not `item`: picking the crate back up
+    -- builds a fresh Moveable from the sprite, so a tag on this one is dead
+    -- weight. Contents are deliberately left untagged — loot a player pulled out
+    -- and stashed nearby is theirs, and cleanup should not take it back.
+    EH.tag(obj, uid)
 
     local container = obj:getContainerByIndex(0)
     if container then
@@ -147,7 +211,7 @@ end
 -- Spawn a loot-filled container. Handles two kinds:
 --   * container items (ItemType = base:container) like "Base.Bag_Military"
 --   * moveables like "Base.Mov_MilitaryCrate" (placed as a real crate)
-function EH.spawnContainer(x, y, z, containerType, lootItems, chance)
+function EH.spawnContainer(x, y, z, containerType, lootItems, chance, uid)
     local sq = containerType and squareAt(x, y, z)
     if not sq then return nil end
 
@@ -155,7 +219,7 @@ function EH.spawnContainer(x, y, z, containerType, lootItems, chance)
     if not item then return nil end
 
     if instanceof(item, "Moveable") then
-        return spawnMoveableObject(sq, item, lootItems, chance)
+        return spawnMoveableObject(sq, item, lootItems, chance, uid)
     end
 
     local container = item:getItemContainer()
@@ -164,7 +228,8 @@ function EH.spawnContainer(x, y, z, containerType, lootItems, chance)
         return nil
     end
 
-    sq:AddWorldInventoryItem(item, 0.5, 0.5, 0)
+    EH.tag(item, uid)
+    EH.tag(sq:AddWorldInventoryItem(item, 0.5, 0.5, 0), uid)
     fillContainer(container, lootItems, chance or 100)
 
     return {
@@ -207,7 +272,7 @@ local function fillVehicleVanillaLoot(vehicle)
     end
 end
 
-function EH.spawnVehicle(x, y, z, vehicleType, opts, tag)
+function EH.spawnVehicle(x, y, z, vehicleType, opts, uid)
     opts = opts or {}
     local objects = {}
     local sq = squareAt(x, y, z)
@@ -233,15 +298,15 @@ function EH.spawnVehicle(x, y, z, vehicleType, opts, tag)
             vehicle:updateSkin()
         end
 
-        -- Tag for diagnostics (DE.VehicleInfo). Cleanup doesn't rely on it.
-        if tag then
-            DE.guard("tag vehicle", function() vehicle:getModData().de_event = tag end)
-        end
+        -- The tag is how cleanup finds this vehicle again. A vehicle's runtime id
+        -- is a 16-bit short that gets reassigned on reload, so it is useless
+        -- across a restart; modData is saved with the vehicle and is not.
+        EH.tag(vehicle, uid)
 
         local vId = vehicle:getId()
         DE.dbg("spawned vehicle id=%d type=%s tag=%s at (%d, %d, %d)",
-            vId, vehicleType, tostring(tag), x, y, z)
-        objects[#objects + 1] = { type = "vehicle", ref = vId, tag = tag, x = x, y = y, z = z }
+            vId, vehicleType, tostring(uid), x, y, z)
+        objects[#objects + 1] = { type = "vehicle", ref = vId, tag = uid, x = x, y = y, z = z }
 
         -- Loot: either the vanilla vehicle-specific tables, or a manual list.
         if opts.loot == "vanilla" then
@@ -347,6 +412,109 @@ end
 -- Cleanup
 -- ============================================================================
 
+-- Widest footprint a sweep will ever walk, in tiles. Caps the cost of one clear
+-- at 81x81 squares even if an event reports a nonsense radius.
+EH.MAX_SWEEP_RADIUS = 40
+
+-- Slack added to an event's recorded footprint, for things that drifted a tile
+-- or two (a wreck nudged, an item kicked over).
+local SWEEP_PADDING = 2
+
+-- Takes obj off sq. Dropped items go out through the world-item path; sprites
+-- and moveables are filed tile objects and need the explicit tile removal too.
+local function removeObject(sq, obj)
+    DE.guard("removeObject", function()
+        if isServer() then sq:transmitRemoveItemFromSquareOnClients(obj) end
+        sq:transmitRemoveItemFromSquare(obj)
+        if not instanceof(obj, "IsoWorldInventoryObject") then
+            sq:RemoveTileObject(obj)
+        end
+    end)
+end
+
+-- Walks every square within `radius` of (x,y,z), handing each vehicle to
+-- onVehicle(veh) and each tile object to onObject(sq, obj). Either may be nil to
+-- skip that half. Shared by the removal sweeps and the read-only tag scan behind
+-- DE.Purge, so they can't drift apart.
+local function sweep(x, y, z, radius, onVehicle, onObject)
+    local c = getCell()
+    if not c then return end
+
+    local r = math.min(math.max(radius or 0, 1), EH.MAX_SWEEP_RADIUS)
+    local seenVehicles = {}
+
+    for dx = -r, r do
+        for dy = -r, r do
+            local sq = c:getGridSquare(x + dx, y + dy, z)
+            if sq then
+                -- A vehicle spans several squares, so dedupe by id.
+                if onVehicle then
+                    local veh = sq:getVehicleContainer()
+                    if veh then
+                        local id = veh:getId()
+                        if not seenVehicles[id] then
+                            seenVehicles[id] = true
+                            onVehicle(veh)
+                        end
+                    end
+                end
+
+                if onObject then
+                    -- Backwards: onObject may remove from this list.
+                    local objects = sq:getObjects()
+                    for i = objects:size() - 1, 0, -1 do
+                        local obj = objects:get(i)
+                        if obj then onObject(sq, obj) end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Removes everything within `radius` of (x,y,z) tagged with `uid`, and nothing
+-- else. Returns how many things it removed.
+function EH.cleanupByTag(x, y, z, uid, radius)
+    if not uid then return 0 end
+
+    local removed = 0
+    sweep(x, y, z, (radius or 0) + SWEEP_PADDING,
+        function(veh)
+            if EH.tagOf(veh) == uid then
+                EH.removeVehicle(veh)
+                removed = removed + 1
+            end
+        end,
+        function(sq, obj)
+            if EH.ownerOf(obj) == uid then
+                removeObject(sq, obj)
+                removed = removed + 1
+            end
+        end)
+    return removed
+end
+
+-- Read-only: uid -> number of tagged things found within `radius`. Backs
+-- DE.Purge, which needs to know which events are lying around before it removes
+-- anything.
+function EH.findTags(x, y, z, radius)
+    local found = {}
+    local function note(uid)
+        if uid then found[uid] = (found[uid] or 0) + 1 end
+    end
+
+    sweep(x, y, z, radius or 30,
+        function(veh) note(EH.tagOf(veh)) end,
+        function(_, obj) note(EH.ownerOf(obj)) end)
+    return found
+end
+
+-- ----------------------------------------------------------------------------
+-- Legacy cleanup: events spawned before tags existed carry a descriptor
+-- manifest instead, matching objects by square + itemType/sprite. Kept so a save
+-- from an older version can still be cleared; nothing new goes down this path.
+-- ----------------------------------------------------------------------------
+
 -- Removes the topmost object on (x,y,z) that `matches`, if any.
 local function removeFromSquare(x, y, z, matches)
     local c = cell()
@@ -402,6 +570,12 @@ local function cleanupMoveable(objData)
         end
     end
 end
+
+-- ----------------------------------------------------------------------------
+-- Zombies and corpses. Not tag-based and never will be: IsoZombie has
+-- resetForReuse and the engine virtualizes zombies whose chunk unloads, so a
+-- modData tag on one does not survive. Both go by radius instead.
+-- ----------------------------------------------------------------------------
 
 -- Removes up to `count` loaded zombies near the site. Zombies can't be matched
 -- individually after virtualization, so we remove this many from around the site.
@@ -478,34 +652,23 @@ function EH.removeVehicle(v)
     DE.guard("cleanupVehicle perm", function() v:permanentlyRemove() end)
 end
 
--- Removes every loaded vehicle within `radius` tiles. Shared by cleanup and by
--- events that clear obstacles before spawning.
-function EH.clearVehicles(x, y, z, radius)
-    local c = getCell()
-    if not c then return 0 end
-
-    local seen, removed = {}, 0
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            local sq = c:getGridSquare(x + dx, y + dy, z)
-            local veh = sq and sq:getVehicleContainer()
-            if veh then
-                local id = veh:getId()
-                if not seen[id] then
-                    seen[id] = true
-                    EH.removeVehicle(veh)
-                    removed = removed + 1
-                end
-            end
-        end
-    end
+-- Removes loaded vehicles within `radius` tiles (capped at MAX_SWEEP_RADIUS).
+-- With `uid`, only vehicles tagged as belonging to that event; without it, every
+-- vehicle in range — which is what events that clear obstacles before spawning
+-- want.
+function EH.clearVehicles(x, y, z, radius, uid)
+    local removed = 0
+    sweep(x, y, z, radius, function(veh)
+        if uid and EH.tagOf(veh) ~= uid then return end
+        EH.removeVehicle(veh)
+        removed = removed + 1
+    end, nil)
     return removed
 end
 
--- Removes everything an event left behind; only reaches loaded chunks.
-function EH.cleanupEvent(x, y, z, objects)
-    if not objects then return end
-
+-- Removes what a pre-tag event recorded in its descriptor manifest. Returns the
+-- number of zombies the manifest claims, for the caller to clean up by count.
+local function cleanupLegacyObjects(x, y, z, objects, uid)
     local vehicles = {}        -- resolved by runtime id (works in-session)
     local sweptPositions = {}  -- recorded positions to proximity-sweep
     local zombieCount = 0
@@ -539,19 +702,43 @@ function EH.cleanupEvent(x, y, z, objects)
         end
     end
 
-    -- Vehicles, then zombies, then the proximity sweep (the only grid walk).
     for _, v in ipairs(vehicles) do
         EH.removeVehicle(v)
     end
-    cleanupZombies(x, y, zombieCount)
-    cleanupCorpses(x, y, z)
+
+    -- The proximity sweep is filtered by uid where we have one: these events
+    -- were tagged even back when the tag was only used for diagnostics, and an
+    -- unfiltered sweep here would take a player's car parked beside the wreck.
     local swept = 0
     for _, pos in ipairs(sweptPositions) do
-        swept = swept + EH.clearVehicles(pos.x, pos.y, pos.z, VEHICLE_PROXIMITY_RADIUS)
+        swept = swept + EH.clearVehicles(pos.x, pos.y, pos.z, VEHICLE_PROXIMITY_RADIUS, uid)
     end
     if swept > 0 then
         DE.log("removed %d vehicle(s) by proximity whose recorded ids no longer resolved", swept)
     end
+
+    return zombieCount
+end
+
+-- ----------------------------------------------------------------------------
+
+-- Removes everything an event left behind; only reaches loaded chunks. `ev` is
+-- the manager's record for the event: uid, radius, zombies, and — for events
+-- that predate tagging — the old objects manifest.
+function EH.cleanupEvent(x, y, z, ev)
+    ev = ev or {}
+
+    local removed = EH.cleanupByTag(x, y, z, ev.uid, ev.radius)
+    DE.dbg("cleanup [%s]: removed %d tagged object(s) within %d tiles",
+        tostring(ev.uid), removed, (ev.radius or 0) + SWEEP_PADDING)
+
+    local zombies = ev.zombies or 0
+    if ev.objects and #ev.objects > 0 then
+        zombies = zombies + cleanupLegacyObjects(x, y, z, ev.objects, ev.uid)
+    end
+
+    cleanupZombies(x, y, zombies)
+    cleanupCorpses(x, y, z)
 end
 
 DE.EventHelpers = EH
@@ -563,17 +750,40 @@ DE.EventHelpers = EH
 local EventContext = {}
 EventContext.__index = EventContext
 
+-- A vehicle is placed by its centre square but covers several, so count a few
+-- tiles past it when measuring the footprint.
+local VEHICLE_FOOTPRINT = 2
+
 function EventContext.new(x, y, z, rot, uid)
     return setmetatable({
-        _objects = {},
+        _objects = {},   -- kept only so a custom spawn calling e:objects() works
+        _radius  = 0,    -- widest offset touched; cleanup sweeps this far out
+        _zombies = 0,
         x = x, y = y, z = z,
         rot = rot or 0,
-        uid = uid,   -- owning event's uid; stamped onto spawned zombies
+        uid = uid,   -- owning event's uid; stamped into everything spawned
     }, EventContext)
 end
 
 function EventContext:objects()
     return self._objects
+end
+
+-- How far from the centre this event reached, in tiles. The manager stores it
+-- and cleanup sweeps that radius looking for the uid tag, so every Spawn* has
+-- to widen it or its objects become unreachable.
+function EventContext:radius()
+    return self._radius
+end
+
+function EventContext:zombieCount()
+    return self._zombies
+end
+
+-- Chebyshev, not euclidean: the sweep walks a square grid.
+function EventContext:_reach(wx, wy, extra)
+    local d = math.max(math.abs(wx - self.x), math.abs(wy - self.y)) + (extra or 0)
+    if d > self._radius then self._radius = d end
 end
 
 function EventContext:_worldPos(dx, dy, radius)
@@ -590,68 +800,66 @@ end
 
 -- Every Spawn* method resolves (dx, dy) + opts.radius into world coords the
 -- same way, so do it in one place and hand back a normalised opts table.
-local function place(self, dx, dy, opts)
+-- `extra` is how far past that point the spawn itself scatters.
+local function place(self, dx, dy, opts, extra)
     opts = opts or {}
     local wx, wy = self:_worldPos(dx, dy, opts.radius)
+    self:_reach(wx, wy, extra)
     return wx, wy, opts
 end
 
 function EventContext:SpawnVehicle(vehicleType, dx, dy, opts)
-    local wx, wy, o = place(self, dx, dy, opts)
-    EH.merge(self._objects,
-        EH.spawnVehicle(wx, wy, self.z, vehicleType, o, self.uid))
+    local wx, wy, o = place(self, dx, dy, opts, VEHICLE_FOOTPRINT)
+    EH.spawnVehicle(wx, wy, self.z, vehicleType, o, self.uid)
 end
 
 function EventContext:SpawnZombies(count, outfit, dx, dy, opts)
-    local wx, wy, o = place(self, dx, dy, opts)
-    local spawned = EH.spawnZombies(wx, wy, self.z, count, o.spread or 3, outfit) or 0
-    if spawned <= 0 then return end
+    local o = opts or {}
+    local spread = o.spread or 3
+    local wx, wy = place(self, dx, dy, o, spread)
 
-    -- Accumulate into a single count record, not one per zombie (cleanup removes
-    -- this many loaded zombies from around the site).
-    for i = 1, #self._objects do
-        if self._objects[i].type == "zombies" then
-            self._objects[i].count = self._objects[i].count + spawned
-            return
-        end
-    end
-    self._objects[#self._objects + 1] = { type = "zombies", count = spawned }
+    -- Counted, not tagged: a zombie loses its modData the moment its chunk
+    -- unloads, so cleanup removes this many loaded zombies from around the site.
+    self._zombies = self._zombies
+        + (EH.spawnZombies(wx, wy, self.z, count, spread, outfit) or 0)
 end
 
 function EventContext:SpawnItem(itemType, dx, dy, opts)
     local wx, wy = place(self, dx, dy, opts)
-    local record = EH.spawnItem(wx, wy, self.z, itemType)
-    if record then self._objects[#self._objects + 1] = record end
+    EH.spawnItem(wx, wy, self.z, itemType, self.uid)
 end
 
 function EventContext:SpawnLootScatter(items, dx, dy, opts)
-    local wx, wy, o = place(self, dx, dy, opts)
-    EH.merge(self._objects,
-        EH.spawnLoot(wx, wy, self.z, items, o.spread or 2, o.chance or 30))
+    local o = opts or {}
+    local spread = o.spread or 2
+    local wx, wy = place(self, dx, dy, o, spread)
+    EH.spawnLoot(wx, wy, self.z, items, spread, o.chance or 30, self.uid)
 end
 
 -- Spawns a loot-filled container (bag/case/toolbox) at an offset. opts.chance
 -- is the per-item fill chance (default 100, i.e. every item).
 function EventContext:SpawnContainer(containerType, lootItems, dx, dy, opts)
     local wx, wy, o = place(self, dx, dy, opts)
-    local record = EH.spawnContainer(wx, wy, self.z, containerType, lootItems, o.chance)
-    if record then self._objects[#self._objects + 1] = record end
+    EH.spawnContainer(wx, wy, self.z, containerType, lootItems, o.chance, self.uid)
 end
 
+-- Fire and smoke are not tracked at all: they burn out, spread where they like,
+-- and nothing they leave behind belongs to us. They don't widen the footprint.
 function EventContext:SpawnFire(count, dx, dy, opts)
-    local wx, wy = place(self, dx, dy, opts)
+    local wx, wy = self:_worldPos(dx, dy, (opts or {}).radius)
     EH.spawnFire(wx, wy, self.z, count)
 end
 
 function EventContext:SpawnSmoke(count, dx, dy, opts)
-    local wx, wy = place(self, dx, dy, opts)
+    local wx, wy = self:_worldPos(dx, dy, (opts or {}).radius)
     EH.spawnSmoke(wx, wy, self.z, count)
 end
 
 function EventContext:SpawnScorch(dx, dy, opts)
-    local wx, wy, o = place(self, dx, dy, opts)
-    EH.merge(self._objects,
-        EH.spawnScorchMarks(wx, wy, self.z, o.spread or 1))
+    local o = opts or {}
+    local spread = o.spread or 1
+    local wx, wy = place(self, dx, dy, o, spread)
+    EH.spawnScorchMarks(wx, wy, self.z, spread, self.uid)
 end
 
 DE.EventContext = EventContext

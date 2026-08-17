@@ -315,25 +315,33 @@ function EM.pickSpawnableLocation(def)
     return nil, lastReason
 end
 
--- Allocates the uid an event will be filed under. Split out from addActive so
--- a spawn can tag the assets it creates (zombies) before the event exists.
+-- Allocates the uid an event will be filed under. Split out from addActive
+-- because the spawn stamps it into everything it creates, which happens before
+-- the event itself is filed.
 function EM.reserveUid(typeId)
     EM._nextId = EM._nextId + 1
     EM._dirty = true
     return typeId .. "_" .. tostring(EM._nextId)
 end
 
-function EM.addActive(typeId, x, y, z, objects, uid)
-    uid = uid or EM.reserveUid(typeId)
-    objects = objects or {}
+-- `info` is what the spawn produced: { uid, radius, zombies, objects }. radius is
+-- the footprint cleanup sweeps for the uid tag; objects is only set by a legacy
+-- spawn that built its own descriptor manifest instead of using the context.
+function EM.addActive(typeId, x, y, z, info)
+    info = info or {}
+    local uid = info.uid or EM.reserveUid(typeId)
+
     EM.active[uid] = {
         typeId = typeId,
         x = x, y = y, z = z,
         spawnedAt = DE.gameHours(),
-        objects = objects
+        radius  = info.radius or 0,
+        zombies = info.zombies or 0,
+        objects = info.objects,
     }
     EM._dirty = true
-    DE.log("event '%s' [%s] now active at (%d, %d, %d) with %d objects", typeId, uid, x, y, z, #objects)
+    DE.log("event '%s' [%s] now active at (%d, %d, %d), %d-tile footprint, %d zombie(s)",
+        typeId, uid, x, y, z, info.radius or 0, info.zombies or 0)
     return uid
 end
 
@@ -350,10 +358,25 @@ function EM.getActiveEvents()
             id = data.typeId, uid = uid,
             x = data.x, y = data.y, z = data.z,
             spawnedAt = data.spawnedAt,
-            objectCount = data.objects and #data.objects or 0,
+            radius  = data.radius or 0,
+            zombies = data.zombies or 0,
         }
     end
     return out
+end
+
+-- What a cleanup needs to know about an event: where it is, how far it reaches,
+-- and the uid stamped into everything it spawned. Built here so clearEvent and
+-- the parked-cleanup path hand the same shape to def.cleanup.
+local function cleanupRecord(uid, data)
+    return {
+        uid = uid,
+        typeId = data.typeId,
+        x = data.x, y = data.y, z = data.z,
+        radius  = data.radius,
+        zombies = data.zombies,
+        objects = data.objects,   -- legacy manifest, absent on new events
+    }
 end
 
 -- Tracked events sorted nearest-first; parked spawns shown alongside (no uid).
@@ -386,12 +409,13 @@ function EM.getActiveEventsNear(x, y)
     return out
 end
 
--- Runs a cleanup that was parked because its chunks weren't loaded.
+-- Runs a cleanup that was parked because its chunks weren't loaded. `args` is
+-- the cleanupRecord that was parked.
 function EM.runQueuedCleanup(args)
     local def = EM.get(args.typeId)
     if def and def.cleanup then
         DE.guard((args.typeId or "?") .. " deferred cleanup", function()
-            def.cleanup(args.x, args.y, args.z, args.objects)
+            def.cleanup(args.x, args.y, args.z, args)
         end)
     end
 end
@@ -402,14 +426,12 @@ function EM.clearEvent(uid)
     local data = EM.active[uid]
     if not data then return false, "no such event" end
 
+    local record = cleanupRecord(uid, data)
+
     if not EM.isSiteLoaded(data.x, data.y, data.z) then
         -- Lua can't remove anything from an unloaded chunk, so park the cleanup
         -- and drop the event from tracking now.
-        DE.SquareQueue.add(data.x, data.y, data.z, "cleanup", {
-            typeId = data.typeId,
-            x = data.x, y = data.y, z = data.z,
-            objects = data.objects,
-        })
+        DE.SquareQueue.add(data.x, data.y, data.z, "cleanup", record)
         EM.removeActive(uid)
         return true, "parked"
     end
@@ -417,7 +439,7 @@ function EM.clearEvent(uid)
     local def = EM.get(data.typeId)
     if def and def.cleanup then
         DE.guard(uid .. " cleanup", function()
-            def.cleanup(data.x, data.y, data.z, data.objects)
+            def.cleanup(data.x, data.y, data.z, record)
         end)
     end
 
@@ -425,11 +447,11 @@ function EM.clearEvent(uid)
     return true, nil
 end
 
--- Runs def.spawn in an EventContext, merges anything it returned, and files the
--- event as active. Shared by the scheduler and the .Spawn debug command.
+-- Runs def.spawn in an EventContext and files the event as active. Shared by the
+-- scheduler and the .Spawn debug command.
 function EM.runSpawn(def, x, y, z, rot)
-    -- Reserve the uid up front: the context stamps it onto spawned zombies so
-    -- cleanup can find them again later.
+    -- Reserve the uid up front: the context stamps it into the modData of
+    -- everything the spawn creates, which is how cleanup finds it all again.
     local uid = EM.reserveUid(def.id)
 
     -- Events that clear obstacles remove vehicles from their footprint first,
@@ -446,17 +468,31 @@ function EM.runSpawn(def, x, y, z, rot)
     DE.EventHelpers.playSound(x, y, z, def.sound)
 
     local ctx = DE.EventContext.new(x, y, z, rot or def.rot or 0, uid)
-    local objects = ctx:objects()
 
     local ok, result = pcall(def.spawn, x, y, z, ctx)
     if not ok then
         DE.err("%s spawn failed: %s", def.id, tostring(result))
-    elseif type(result) == "table" and result ~= objects then
-        DE.EventHelpers.merge(objects, result)
     end
 
-    DE.dbg("%s spawn produced %d tracked objects", def.id, #objects)
-    return EM.addActive(def.id, x, y, z, objects, uid)
+    -- Anything the context spawned is tagged, so the radius is all cleanup
+    -- needs. A spawn that instead hands back its own descriptor manifest (or
+    -- fills e:objects() itself) built untagged objects, so keep that list.
+    local legacy = ctx:objects()
+    if type(result) == "table" and result ~= legacy then
+        legacy = result
+    end
+    if #legacy == 0 then legacy = nil end
+
+    DE.dbg("%s spawn footprint %d tiles, %d zombie(s)%s",
+        def.id, ctx:radius(), ctx:zombieCount(),
+        legacy and (", " .. #legacy .. " untagged object(s)") or "")
+
+    return EM.addActive(def.id, x, y, z, {
+        uid     = uid,
+        radius  = ctx:radius(),
+        zombies = ctx:zombieCount(),
+        objects = legacy,
+    })
 end
 
 -- Spawns now if the site is streamed in, otherwise parks the spawn against the
@@ -512,13 +548,17 @@ local function shallowCopy(src)
 end
 
 -- Copied field-by-field so runtime-only state (e.g. _lastRadioBroadcast) stays
--- out of the save.
+-- out of the save. `objects` is deliberately not defaulted to {}: only events
+-- from before tagging have one, and an empty table per event is dead weight in
+-- every save from here on.
 local function persistableEvent(ev)
     return {
         typeId = ev.typeId,
         x = ev.x, y = ev.y, z = ev.z,
         spawnedAt = ev.spawnedAt,
-        objects = ev.objects or {},
+        radius  = ev.radius or 0,
+        zombies = ev.zombies or 0,
+        objects = ev.objects,
     }
 end
 

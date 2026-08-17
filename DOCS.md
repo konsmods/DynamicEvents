@@ -54,11 +54,13 @@ In-game debug console (`.Command`) or server console. All admin-gated.
 | `DE.ClearEvent(uid)` | clear one event |
 | `DE.ClearNearby(radius)` | clear events within radius (default 100) |
 | `DE.Clean()` | clear every event |
+| `DE.Purge(radius)` | remove leftovers of events the mod forgot (default 30) |
 | `DE.ClearCooldowns()` | reset all event cooldowns |
 | `DE.SchedulerInfo()` | what the scheduler is waiting for |
 | `DE.Info()` | config + registered events |
 | `DE.WhereAmI()` | your coordinates |
 | `DE.VehicleInfo()` | vehicle on your square |
+| `DE.TagHere()` | event tags on your square |
 | `DE.CheckSpot(radius)` | count vehicles around you |
 | `DE.Outfits(keyword)` | list zombie outfit names |
 
@@ -127,4 +129,21 @@ any `opts` table accepts `radius` for position jitter.
 `SpawnContainer` types: any `ItemType = base:container` (e.g. `Base.Bag_Military`,
 `Base.Toolbox`) or moveables (`Base.Mov_MilitaryCrate`, `Base.Mov_MilitaryLocker`).
 
-Everything spawned through `e` is tracked, so an admin clear removes it.
+## Ownership and cleanup
+
+Everything spawned through `e` is stamped with the event's id in its `modData`,
+so an admin clear sweeps the event's footprint and removes exactly what the event
+put there. Your car parked on top of a wreck, or a bag you dropped on the site,
+is left alone. Tags are saved with the object, so they survive a server restart.
+
+Two exceptions:
+
+- **Zombies** can't be tagged — the engine recycles them once their chunk
+  unloads. They're counted instead, and a clear removes that many walkers (and
+  any corpses) from within 20 tiles of the site.
+- **Loot inside a spawned crate** is untagged on purpose. Take it out and stash
+  it nearby and it's yours to keep; leave it in and it goes with the crate.
+
+`DE.Purge(radius)` mops up tagged leftovers from events the mod no longer tracks
+(a rolled-back save, an interrupted clear). It never touches an event that is
+still listed by `DE.ListEvents()` — use `DE.ClearEvent(uid)` for those.
