@@ -14,7 +14,7 @@ local EVENT = {
     },
 
     spawn = function(x, y, z, e)
-        e:SpawnZombies(DE.rand(25, 50), nil, 0, 0, { spread = 15 })
+        e:SpawnZombies(DE.rand(25, 50), 0, 0, { spread = 15 })
     end,
 }
 

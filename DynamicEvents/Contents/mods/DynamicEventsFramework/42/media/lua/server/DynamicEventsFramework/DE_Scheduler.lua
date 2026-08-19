@@ -96,6 +96,49 @@ local function fireDueEvent()
     DE.Scheduler.nextFireHour = now + interval
 end
 
+-- Clears any active event whose lifetime has elapsed. Collect first, then
+-- clear: EM.clearEvent mutates EM.active, so we can't remove mid-iteration.
+local function checkLifetimes()
+    local now = DE.gameHours()
+    local expired = nil
+    for uid, data in pairs(DE.EventManager.active) do
+        if data.expiresAt and now >= data.expiresAt then
+            expired = expired or {}
+            expired[#expired + 1] = uid
+        end
+    end
+    if not expired then return end
+    for _, uid in ipairs(expired) do
+        DE.log("event [%s] reached its lifetime; clearing", uid)
+        DE.EventManager.clearEvent(uid)
+    end
+end
+
+-- Runs each active event's pulse fn on its own interval. lastPulse is runtime
+-- state (not saved): after a restart the first pulse fires on the next pass,
+-- which is harmless. Only fires for events whose site is loaded — a pulse acts
+-- on live world objects (zombies, etc.) that only exist in a streamed chunk.
+local function dispatchPulses()
+    local now = DE.gameHours() * 3600
+    for _, data in pairs(DE.EventManager.active) do
+        local def = DE.EventManager.get(data.typeId)
+        local pulse = def and def.pulse
+        if pulse and pulse.fn then
+            local interval = pulse.intervalSeconds or 300
+            if now - (data.lastPulse or 0) >= interval then
+                if DE.EventManager.isSiteLoaded(data.x, data.y, data.z) then
+                    DE.guard((data.typeId or "?") .. " pulse", function()
+                        pulse.fn(data.x, data.y, data.z, data)
+                    end)
+                end
+                -- Advance the clock even when the site is unloaded, so a pulse
+                -- can't build up a backlog of missed intervals to fire at once.
+                data.lastPulse = now
+            end
+        end
+    end
+end
+
 -- Lazy init on the first tick with game time. Not Events.OnGameStart: on a
 -- dedicated server that fires before mod files load, so this handler would
 -- never run.
@@ -142,6 +185,8 @@ local function onTick()
         processPendingSpawns()
         fireDueEvent()
         DE.broadcastRadios()
+        checkLifetimes()
+        dispatchPulses()
         DE.EventManager.saveState()
     end
 end

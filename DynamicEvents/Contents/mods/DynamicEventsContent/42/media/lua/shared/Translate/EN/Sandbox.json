@@ -14,5 +14,8 @@
     "Sandbox_DynamicEventsContent_HumanitarianAirdrop_tooltip": "Supply crates with food, seeds, water and basic tools.",
 
     "Sandbox_DynamicEventsContent_SimpleHorde": "Simple Horde",
-    "Sandbox_DynamicEventsContent_SimpleHorde_tooltip": "A large horde of zombies scattered over a wide area. Rare, with a long cooldown."
+    "Sandbox_DynamicEventsContent_SimpleHorde_tooltip": "A large horde of zombies scattered over a wide area. Rare, with a long cooldown.",
+
+    "Sandbox_DynamicEventsContent_CityRepopulation": "Wandering Horde",
+    "Sandbox_DynamicEventsContent_CityRepopulation_tooltip": "Spawns a wandering horde on a town's outskirts and draws it toward the centre, repopulating cleared-out areas. Edit the event file to set your town's coordinates."
 }

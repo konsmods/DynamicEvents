@@ -76,13 +76,37 @@ end
 -- The trailing uid is the owning event; it is stamped onto whatever is created.
 -- ============================================================================
 
+-- Applies optional per-item customisation before the item is placed:
+--   opts.name    display name (setName)
+--   opts.note    text written onto a writable item (Literature pages)
+--   opts.modData arbitrary modData keys stamped onto the item
+local function customiseItem(item, opts)
+    if not opts then return end
+    DE.guard("customiseItem", function()
+        if opts.name then item:setName(opts.name) end
+        if opts.note and instanceof(item, "Literature") then
+            item:setCustomPages(nil)   -- clear any default pages first
+            item:addPage(1, opts.note)
+            item:setBookName(opts.name or item:getName())
+        end
+        if opts.modData then
+            local md = item:getModData()
+            for k, v in pairs(opts.modData) do md[k] = v end
+        end
+    end)
+end
+
 -- Drops one item on the ground. Returns its tracking record, or nil.
-function EH.spawnItem(x, y, z, itemType, uid)
+-- `opts` is optional per-item customisation (name/note/modData); see
+-- customiseItem.
+function EH.spawnItem(x, y, z, itemType, uid, opts)
     local sq = itemType and squareAt(x, y, z)
     if not sq then return nil end
 
     local item = instanceItem(itemType)
     if not item then return nil end
+
+    customiseItem(item, opts)
 
     -- Tag the item as well as the world object: the item is the durable half,
     -- it keeps the tag through a pick-up and re-drop.
@@ -155,8 +179,25 @@ local function partContainer(vehicle, ...)
     end
 end
 
-local function fillContainer(container, items, chance)
-    if not container or not items then return end
+-- Rolls a vanilla loot table (a ProceduralDistributions entry, e.g.
+-- "GunStoreDisplayCase" or "ArmyStorageGuns") into the container. This is the
+-- same data the game fills world containers from, so any table defined by the
+-- base game or another mod's distributions works by name.
+local function fillFromDistribution(container, distName)
+    local list = ProceduralDistributions and ProceduralDistributions.list
+    local dist = list and list[distName]
+    if not dist then
+        DE.warn("no loot distribution named '%s'", tostring(distName))
+        return
+    end
+    DE.guard("rollItem " .. distName, function()
+        -- Same call the mod's vehicle loot uses; junk sub-table first if present.
+        if dist.junk then ItemPickerJava.rollItem(dist.junk, container, true, nil, nil) end
+        ItemPickerJava.rollItem(dist, container, true, nil, nil)
+    end)
+end
+
+local function fillFromList(container, items, chance)
     for _, itemName in ipairs(items) do
         if DE.chance(chance) then
             local item = instanceItem(itemName)
@@ -166,6 +207,18 @@ local function fillContainer(container, items, chance)
                 sendAddItemToContainer(container, item)
             end
         end
+    end
+end
+
+-- Fills a container from `loot`, which is either:
+--   * a plain list of item types    -> each rolled at `chance`%
+--   * { distribution = "TableName" } -> a vanilla loot table, rolled by the game
+local function fillContainer(container, loot, chance)
+    if not container or not loot then return end
+    if loot.distribution then
+        fillFromDistribution(container, loot.distribution)
+    else
+        fillFromList(container, loot, chance)
     end
 end
 
@@ -808,39 +861,69 @@ local function place(self, dx, dy, opts, extra)
     return wx, wy, opts
 end
 
-function EventContext:SpawnVehicle(vehicleType, dx, dy, opts)
-    local wx, wy, o = place(self, dx, dy, opts, VEHICLE_FOOTPRINT)
-    EH.spawnVehicle(wx, wy, self.z, vehicleType, o, self.uid)
+-- The uid to stamp into what a Spawn* creates, or nil when opts.permanent is
+-- set. A permanent object carries no tag, so cleanup never removes it — it
+-- outlives the event. Everything else is tagged and swept up on cleanup.
+local function tagFor(self, opts)
+    if opts and opts.permanent then return nil end
+    return self.uid
 end
 
-function EventContext:SpawnZombies(count, outfit, dx, dy, opts)
+function EventContext:SpawnVehicle(vehicleType, dx, dy, opts)
+    local wx, wy, o = place(self, dx, dy, opts, VEHICLE_FOOTPRINT)
+    EH.spawnVehicle(wx, wy, self.z, vehicleType, o, tagFor(self, o))
+end
+
+-- Themed zombies, tracked so cleanup removes them. opts.outfit is a vanilla
+-- outfit name (e.g. "ArmyCamoGreen"); opts.spread widens the scatter.
+function EventContext:SpawnZombies(count, dx, dy, opts)
     local o = opts or {}
     local spread = o.spread or 3
     local wx, wy = place(self, dx, dy, o, spread)
 
-    -- Counted, not tagged: a zombie loses its modData the moment its chunk
+    local n = EH.spawnZombies(wx, wy, self.z, count, spread, o.outfit) or 0
+
+    -- Counted (not tagged): a zombie loses its modData the moment its chunk
     -- unloads, so cleanup removes this many loaded zombies from around the site.
-    self._zombies = self._zombies
-        + (EH.spawnZombies(wx, wy, self.z, count, spread, outfit) or 0)
+    -- Permanent zombies aren't counted, so cleanup leaves them behind.
+    if not o.permanent then
+        self._zombies = self._zombies + n
+    end
 end
 
+-- World-owned horde for repopulation. Never tracked and never cleaned up:
+-- these are meant to persist and wander (pair with a pulse + DE.attractZombies
+-- to draw them toward a town). Larger default scatter than SpawnZombies.
+function EventContext:SpawnHorde(count, dx, dy, opts)
+    local o = opts or {}
+    local spread = o.spread or 20
+    -- Deliberately does not widen the footprint (like fire/smoke): the horde is
+    -- not part of what cleanup sweeps.
+    local wx, wy = self:_worldPos(dx, dy, o.radius)
+    EH.spawnZombies(wx, wy, self.z, count, spread, o.outfit)
+end
+
+-- Drops one item. opts.name/opts.note/opts.modData customise it — note writes
+-- text onto a writable item (Base.Note and similar), turning it into readable
+-- lore. See customiseItem.
 function EventContext:SpawnItem(itemType, dx, dy, opts)
-    local wx, wy = place(self, dx, dy, opts)
-    EH.spawnItem(wx, wy, self.z, itemType, self.uid)
+    local wx, wy, o = place(self, dx, dy, opts)
+    EH.spawnItem(wx, wy, self.z, itemType, tagFor(self, o), o)
 end
 
-function EventContext:SpawnLootScatter(items, dx, dy, opts)
+function EventContext:SpawnLoot(items, dx, dy, opts)
     local o = opts or {}
     local spread = o.spread or 2
     local wx, wy = place(self, dx, dy, o, spread)
-    EH.spawnLoot(wx, wy, self.z, items, spread, o.chance or 30, self.uid)
+    EH.spawnLoot(wx, wy, self.z, items, spread, o.chance or 30, tagFor(self, o))
 end
 
--- Spawns a loot-filled container (bag/case/toolbox) at an offset. opts.chance
--- is the per-item fill chance (default 100, i.e. every item).
+-- Spawns a loot-filled container (bag/case/crate) at an offset. `lootItems` is
+-- a plain item list (opts.chance is the per-item fill chance, default 100) or
+-- { distribution = "TableName" } to roll a vanilla loot table instead.
 function EventContext:SpawnContainer(containerType, lootItems, dx, dy, opts)
     local wx, wy, o = place(self, dx, dy, opts)
-    EH.spawnContainer(wx, wy, self.z, containerType, lootItems, o.chance, self.uid)
+    EH.spawnContainer(wx, wy, self.z, containerType, lootItems, o.chance, tagFor(self, o))
 end
 
 -- Fire and smoke are not tracked at all: they burn out, spread where they like,
@@ -859,7 +942,7 @@ function EventContext:SpawnScorch(dx, dy, opts)
     local o = opts or {}
     local spread = o.spread or 1
     local wx, wy = place(self, dx, dy, o, spread)
-    EH.spawnScorchMarks(wx, wy, self.z, spread, self.uid)
+    EH.spawnScorchMarks(wx, wy, self.z, spread, tagFor(self, o))
 end
 
 DE.EventContext = EventContext

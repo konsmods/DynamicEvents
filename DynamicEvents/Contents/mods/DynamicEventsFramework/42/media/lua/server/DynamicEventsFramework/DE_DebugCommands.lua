@@ -457,26 +457,12 @@ function DE.SchedulerInfo(player)
     DE.log("Pending spawns (warning delay): %d", #DE._pendingSpawns)
 
     DE.log("=== Event eligibility right now ===")
-    local days = DE.gameDays()
     for _, def in ipairs(DE.EventManager.all()) do
-        local reasons = {}
-        if not DE.EventManager.isEnabledInSandbox(def) then
-            reasons[#reasons + 1] = "sandbox toggle off"
-        end
-        if DE.EventManager.isOnCooldown(def.id) then
-            reasons[#reasons + 1] = string.format("cooldown until %.2fh", DE.EventManager.cooldowns[def.id])
-        end
-        if days < (def.minDaysSurvived or 0) then
-            reasons[#reasons + 1] = "needs day " .. (def.minDaysSurvived or 0)
-        end
-        if not DE.EventManager.dependenciesMet(def) then
-            reasons[#reasons + 1] = "missing dependency"
-        end
-
-        if #reasons == 0 then
+        local reason = DE.EventManager.eligibilityReason(def)
+        if not reason then
             DE.log("  %s: ELIGIBLE", def.id)
         else
-            DE.log("  %s: not eligible — %s", def.id, table.concat(reasons, ", "))
+            DE.log("  %s: not eligible — %s", def.id, reason)
         end
     end
 
@@ -507,6 +493,8 @@ local HANDLERS = {
     Outfits       = function(p, a) DE.Outfits(a.keyword, p) end,
     Info          = function(p)    DE.Info(p) end,
     SchedulerInfo = function(p)    DE.SchedulerInfo(p) end,
+    -- The admin panel's read side: gather state and send it back to the client.
+    RequestState  = function(p)    DE.sendStateSnapshot(p) end,
 }
 
 local function isPlayerAuthorized(p)

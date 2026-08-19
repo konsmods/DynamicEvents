@@ -37,6 +37,12 @@ function EM.register(def)
     -- When true the scheduler clears vehicles from the spawn area rather than
     -- skipping this location. clearRadius defaults to MinDistanceFromVehicles.
     def.clearObstacles = def.clearObstacles or false
+    -- Optional: in-game hours after spawn before the event auto-clears. nil (or
+    -- 0) means it stays until an admin clears it.
+    def.lifetimeHours = def.lifetimeHours or 0
+    -- Optional pulse = { intervalSeconds, fn }: fn(x, y, z, ev) runs on that
+    -- in-game-second interval while the event is active. No validation beyond
+    -- presence; the scheduler guards the call.
 
     EM.types[def.id] = def
 
@@ -114,6 +120,20 @@ function EM.isEnabledInSandbox(def)
         return true
     end
     return val ~= false
+end
+
+-- The first reason `def` can't fire right now, or nil if it's eligible. One
+-- place so the scheduler dump and the admin-panel snapshot agree on the wording.
+function EM.eligibilityReason(def)
+    if not EM.isEnabledInSandbox(def) then return "sandbox toggle off" end
+    if EM.isOnCooldown(def.id) then
+        return string.format("cooldown until %.1fh", EM.cooldowns[def.id] or 0)
+    end
+    if DE.gameDays() < (def.minDaysSurvived or 0) then
+        return "needs day " .. (def.minDaysSurvived or 0)
+    end
+    if not EM.dependenciesMet(def) then return "missing dependency" end
+    return nil
 end
 
 function EM.getEligible()
@@ -331,17 +351,25 @@ function EM.addActive(typeId, x, y, z, info)
     info = info or {}
     local uid = info.uid or EM.reserveUid(typeId)
 
+    -- An event with a lifetime records the hour it should auto-clear at; the
+    -- scheduler's checkLifetimes pass clears it once past that.
+    local def = EM.get(typeId)
+    local lifetime = def and def.lifetimeHours or 0
+    local expiresAt = lifetime > 0 and (DE.gameHours() + lifetime) or nil
+
     EM.active[uid] = {
         typeId = typeId,
         x = x, y = y, z = z,
         spawnedAt = DE.gameHours(),
+        expiresAt = expiresAt,
         radius  = info.radius or 0,
         zombies = info.zombies or 0,
         objects = info.objects,
     }
     EM._dirty = true
-    DE.log("event '%s' [%s] now active at (%d, %d, %d), %d-tile footprint, %d zombie(s)",
-        typeId, uid, x, y, z, info.radius or 0, info.zombies or 0)
+    DE.log("event '%s' [%s] now active at (%d, %d, %d), %d-tile footprint, %d zombie(s)%s",
+        typeId, uid, x, y, z, info.radius or 0, info.zombies or 0,
+        expiresAt and string.format(", expires at hour %.1f", expiresAt) or "")
     return uid
 end
 
@@ -556,6 +584,7 @@ local function persistableEvent(ev)
         typeId = ev.typeId,
         x = ev.x, y = ev.y, z = ev.z,
         spawnedAt = ev.spawnedAt,
+        expiresAt = ev.expiresAt,   -- nil for events with no lifetime
         radius  = ev.radius or 0,
         zombies = ev.zombies or 0,
         objects = ev.objects,

@@ -65,9 +65,9 @@ local EVENT = {
         e:SpawnContainer("Base.Mov_MilitaryCrate", crateLoot, 2, 0, { chance = 100 })
         e:SpawnContainer("Base.Mov_MilitaryCrate", crateLoot, -2, 0, { chance = 100 })
 
-        e:SpawnLootScatter(medicalLoot, 0, 0, { spread = 3, chance = 40 })
+        e:SpawnLoot(medicalLoot, 0, 0, { spread = 3, chance = 40 })
 
-        e:SpawnZombies(DE.rand(10, 25), "ArmyCamoGreen", 0, 0, { radius = 3 })
+        e:SpawnZombies(DE.rand(10, 25), 0, 0, { outfit = "ArmyCamoGreen", radius = 3 })
     end,
 }
 

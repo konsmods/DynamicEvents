@@ -39,3 +39,11 @@ option DynamicEventsContent.SimpleHorde
     page = DynamicEventsContent,
     translation = DynamicEventsContent_SimpleHorde,
 }
+
+option DynamicEventsContent.CityRepopulation
+{
+    type = boolean,
+    default = true,
+    page = DynamicEventsContent,
+    translation = DynamicEventsContent_CityRepopulation,
+}
