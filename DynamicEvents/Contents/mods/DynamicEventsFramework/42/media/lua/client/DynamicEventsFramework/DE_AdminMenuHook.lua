@@ -1,6 +1,6 @@
 -- Adds a "Dynamic Events" entry to the vanilla multiplayer admin panel (the
--- gear button on the left, admins only). Single-player has no such panel, so
--- the keybind in DE_PanelPlumbing.lua is what opens the window there.
+-- gear button on the left, admins only). Single-player has no such panel; there
+-- the window is opened from the debug console with DE.OpenPanel().
 --
 -- Done by wrapping ISAdminPanelUI's create/onOptionMouseDown rather than editing
 -- them, so the vanilla layout stays intact and other mods can hook too.

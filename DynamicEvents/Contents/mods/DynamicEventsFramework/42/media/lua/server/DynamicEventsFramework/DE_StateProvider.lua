@@ -14,7 +14,6 @@ local function schedulerState()
         worldAge      = now,
         interval      = DE.Config.intervalHours or 1,
         grace         = DE.Config.gracePeriodHours or 0,
-        nextFireHour  = sched.nextFireHour,
         remaining     = sched.nextFireHour and (sched.nextFireHour - now) or nil,
         pendingSpawns = DE._pendingSpawns and #DE._pendingSpawns or 0,
         parked        = DE.SquareQueue and DE.SquareQueue.count() or 0,

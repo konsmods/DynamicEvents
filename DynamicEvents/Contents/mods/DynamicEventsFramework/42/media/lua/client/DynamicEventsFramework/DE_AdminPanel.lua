@@ -1,7 +1,7 @@
 -- The admin panel window. A resizable, tabbed ISCollapsableWindow that renders
 -- whatever snapshot DE_PanelPlumbing feeds it (:setData) and drives actions back
--- through the existing DE.* commands. It holds no state of its own beyond the
--- last snapshot — the server is the source of truth.
+-- through the existing DE.* commands. It holds no state of its own — the server
+-- is the source of truth.
 --
 -- Widgets are created once in createChildren and (re)positioned in layout(),
 -- which runs on create and whenever the window is resized. That one place owns
@@ -33,7 +33,6 @@ function DEAdminPanel:new()
     o.title = "Dynamic Events"
     o.minimumWidth = MIN_W
     o.minimumHeight = MIN_H
-    o.snapshot = nil
     o.lastRefresh = 0
     o.lastTypeSel = nil
     o.lastEventSel = nil
@@ -256,7 +255,6 @@ local function reselect(list, field, key)
 end
 
 function DEAdminPanel:setData(snap)
-    self.snapshot = snap
     if not snap then return end
 
     local keepUid = selectedKey(self.eventList, "uid")

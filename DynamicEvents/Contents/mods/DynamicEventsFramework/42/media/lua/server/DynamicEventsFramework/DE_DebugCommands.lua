@@ -18,6 +18,26 @@ local function report(p, fmt, ...)
     if p then p:Say(msg) end
 end
 
+-- Resolve spawn coords: explicit x/y/z if given, else the player's, else the
+-- def's first location.
+local function resolveCoords(def, x, y, z, p)
+    if x then return x, y or 0, z or 0 end
+    if p then return p:getX(), p:getY(), p:getZ() end
+    DE.log("No player found, using first location")
+    local loc = def.locations[1]
+    return loc.x, loc.y, loc.z or 0
+end
+
+-- Run a spawn through spawnOrQueue (not runSpawn: coords whose chunk isn't
+-- loaded have to park, exactly like a scheduled event) and report the outcome.
+local function spawnAndReport(p, def, x, y, z, rot)
+    if DE.EventManager.spawnOrQueue(def, x, y, z, rot) == "queued" then
+        report(p, "Parked %s at (%d, %d, %d) — appears when that area loads", def.name or def.id, x, y, z)
+    else
+        report(p, "Spawned %s at (%d, %d, %d)", def.name or def.id, x, y, z)
+    end
+end
+
 function DE.Spawn(eventId, x, y, z, rot, player)
     local def = DE.EventManager.get(eventId)
     if not def then
@@ -26,30 +46,14 @@ function DE.Spawn(eventId, x, y, z, rot, player)
     end
 
     local p = getPlayer(player)
-    if not x then
-        if p then
-            x, y, z = p:getX(), p:getY(), p:getZ()
-        else
-            DE.log("No player found, using first location")
-            local loc = def.locations[1]
-            x, y, z = loc.x, loc.y, loc.z or 0
-        end
-    end
-    local sx, sy, sz = x, y or 0, z or 0
+    x, y, z = resolveCoords(def, x, y, z, p)
 
-    local nearVeh = DE.EventManager.countVehiclesNear(sx, sy, sz)
+    local nearVeh = DE.EventManager.countVehiclesNear(x, y, z)
     if nearVeh > 0 then
-        DE.log("WARNING: %d vehicle(s) already within range of (%d, %d) — forced spawn", nearVeh, sx, sy)
+        DE.log("WARNING: %d vehicle(s) already within range of (%d, %d) — spawning anyway", nearVeh, x, y)
     end
 
-    -- Go through spawnOrQueue, not runSpawn: spawning at coordinates whose
-    -- chunk isn't loaded has to park, exactly like a scheduled event.
-    local result = DE.EventManager.spawnOrQueue(def, sx, sy, sz, rot)
-    if result == "queued" then
-        report(p, "Parked %s at (%d, %d, %d) — appears when that area loads", def.name or def.id, sx, sy, sz)
-    else
-        report(p, "Spawned %s at (%d, %d, %d)", def.name or def.id, sx, sy, sz)
-    end
+    spawnAndReport(p, def, x, y, z, rot)
 end
 
 function DE.SpawnHere(eventId, player)
@@ -74,28 +78,14 @@ function DE.SpawnForce(eventId, x, y, z, rot, player)
     end
 
     local p = getPlayer(player)
-    if not x then
-        if p then
-            x, y, z = p:getX(), p:getY(), p:getZ()
-        else
-            DE.log("No player found, using first location")
-            local loc = def.locations[1]
-            x, y, z = loc.x, loc.y, loc.z or 0
-        end
-    end
-    local sx, sy, sz = x, y or 0, z or 0
+    x, y, z = resolveCoords(def, x, y, z, p)
 
     local radius = DE.EventManager.clearRadiusFor(def)
-    local cleared = DE.EventHelpers.clearVehicles(sx, sy, sz, radius)
+    local cleared = DE.EventHelpers.clearVehicles(x, y, z, radius)
     DE.log("forced spawn: cleared %d vehicle(s) within %d tiles of (%d, %d)",
-        cleared, radius, sx, sy)
+        cleared, radius, x, y)
 
-    local result = DE.EventManager.spawnOrQueue(def, sx, sy, sz, rot)
-    if result == "queued" then
-        report(p, "Parked %s at (%d, %d, %d) — appears when that area loads", def.name or def.id, sx, sy, sz)
-    else
-        report(p, "Spawned %s at (%d, %d, %d)", def.name or def.id, sx, sy, sz)
-    end
+    spawnAndReport(p, def, x, y, z, rot)
 end
 
 -- Lists tracked events and parked spawns, nearest first.

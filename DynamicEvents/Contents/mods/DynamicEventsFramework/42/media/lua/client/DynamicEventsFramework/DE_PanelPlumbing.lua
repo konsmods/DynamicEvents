@@ -1,5 +1,7 @@
--- Client-side glue for the admin panel: the keybind that opens it, the admin
--- gate, and the state round-trip that feeds it.
+-- Client-side glue for the admin panel: how it opens, the admin gate, and the
+-- state round-trip that feeds it. Opened from the MP admin panel (see
+-- DE_AdminMenuHook.lua) or the debug console with DE.OpenPanel() — the latter is
+-- how you reach it in single-player, where the admin panel doesn't exist.
 --
 -- No `if not isClient()` guard: this must run in single-player too. A dedicated
 -- server never loads client/ Lua, so there's nothing to guard against there.
@@ -69,7 +71,4 @@ function DE.OpenPanel()
     DE.requestState()
 end
 
--- Opened from the MP admin panel (see DE_AdminMenuHook.lua), or from the debug
--- console with DE.OpenPanel() — which is how you reach it in single-player,
--- where the admin panel doesn't exist.
 print("[DynamicEventsFramework][CLI] admin panel loaded (open with DE.OpenPanel())")

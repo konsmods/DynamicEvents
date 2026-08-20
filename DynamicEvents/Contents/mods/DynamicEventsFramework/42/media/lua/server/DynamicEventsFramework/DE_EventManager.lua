@@ -137,20 +137,13 @@ function EM.eligibilityReason(def)
 end
 
 function EM.getEligible()
-    local daysSurvived = DE.gameDays()
     local eligible = {}
-
     for i = 1, #EM.order do
         local def = EM.types[EM.order[i]]
-        if def
-            and EM.isEnabledInSandbox(def)
-            and not EM.isOnCooldown(def.id)
-            and daysSurvived >= (def.minDaysSurvived or 0)
-            and EM.dependenciesMet(def) then
+        if def and EM.eligibilityReason(def) == nil then
             eligible[#eligible + 1] = def
         end
     end
-
     return eligible
 end
 
@@ -344,9 +337,8 @@ function EM.reserveUid(typeId)
     return typeId .. "_" .. tostring(EM._nextId)
 end
 
--- `info` is what the spawn produced: { uid, radius, zombies, objects }. radius is
--- the footprint cleanup sweeps for the uid tag; objects is only set by a legacy
--- spawn that built its own descriptor manifest instead of using the context.
+-- `info` is what the spawn produced: { uid, radius, zombies }. radius is the
+-- footprint cleanup sweeps for the uid tag.
 function EM.addActive(typeId, x, y, z, info)
     info = info or {}
     local uid = info.uid or EM.reserveUid(typeId)
@@ -364,7 +356,6 @@ function EM.addActive(typeId, x, y, z, info)
         expiresAt = expiresAt,
         radius  = info.radius or 0,
         zombies = info.zombies or 0,
-        objects = info.objects,
     }
     EM._dirty = true
     DE.log("event '%s' [%s] now active at (%d, %d, %d), %d-tile footprint, %d zombie(s)%s",
@@ -403,7 +394,6 @@ local function cleanupRecord(uid, data)
         x = data.x, y = data.y, z = data.z,
         radius  = data.radius,
         zombies = data.zombies,
-        objects = data.objects,   -- legacy manifest, absent on new events
     }
 end
 
@@ -497,29 +487,19 @@ function EM.runSpawn(def, x, y, z, rot)
 
     local ctx = DE.EventContext.new(x, y, z, rot or def.rot or 0, uid)
 
-    local ok, result = pcall(def.spawn, x, y, z, ctx)
+    local ok, err = pcall(def.spawn, x, y, z, ctx)
     if not ok then
-        DE.err("%s spawn failed: %s", def.id, tostring(result))
+        DE.err("%s spawn failed: %s", def.id, tostring(err))
     end
 
-    -- Anything the context spawned is tagged, so the radius is all cleanup
-    -- needs. A spawn that instead hands back its own descriptor manifest (or
-    -- fills e:objects() itself) built untagged objects, so keep that list.
-    local legacy = ctx:objects()
-    if type(result) == "table" and result ~= legacy then
-        legacy = result
-    end
-    if #legacy == 0 then legacy = nil end
-
-    DE.dbg("%s spawn footprint %d tiles, %d zombie(s)%s",
-        def.id, ctx:radius(), ctx:zombieCount(),
-        legacy and (", " .. #legacy .. " untagged object(s)") or "")
+    -- Everything the context spawned is tagged with the uid, so the footprint
+    -- radius is all cleanup needs to find it again.
+    DE.dbg("%s spawn footprint %d tiles, %d zombie(s)", def.id, ctx:radius(), ctx:zombieCount())
 
     return EM.addActive(def.id, x, y, z, {
         uid     = uid,
         radius  = ctx:radius(),
         zombies = ctx:zombieCount(),
-        objects = legacy,
     })
 end
 
@@ -576,9 +556,7 @@ local function shallowCopy(src)
 end
 
 -- Copied field-by-field so runtime-only state (e.g. _lastRadioBroadcast) stays
--- out of the save. `objects` is deliberately not defaulted to {}: only events
--- from before tagging have one, and an empty table per event is dead weight in
--- every save from here on.
+-- out of the save.
 local function persistableEvent(ev)
     return {
         typeId = ev.typeId,
@@ -587,7 +565,6 @@ local function persistableEvent(ev)
         expiresAt = ev.expiresAt,   -- nil for events with no lifetime
         radius  = ev.radius or 0,
         zombies = ev.zombies or 0,
-        objects = ev.objects,
     }
 end
 
@@ -620,24 +597,6 @@ function EM.loadState()
     end
     for id, untilHour in pairs(data.cooldowns or {}) do
         EM.cooldowns[id] = untilHour
-    end
-    -- Migration: fold the old deferred-cleanup queue back into tracked events
-    -- so that wreckage isn't orphaned.
-    local migrated = 0
-    for uid, entry in pairs(data.pendingCleanup or {}) do
-        if not EM.active[uid] then
-            EM.active[uid] = {
-                typeId    = entry.typeId,
-                x = entry.x, y = entry.y, z = entry.z,
-                spawnedAt = entry.queuedAt or DE.gameHours(),
-                objects   = entry.objects or {},
-            }
-            migrated = migrated + 1
-        end
-    end
-    if migrated > 0 then
-        EM._dirty = true
-        DE.log("migrated %d event(s) from the old deferred-cleanup queue into tracked events", migrated)
     end
 
     DE.SquareQueue.deserialize(data.squareQueue)
