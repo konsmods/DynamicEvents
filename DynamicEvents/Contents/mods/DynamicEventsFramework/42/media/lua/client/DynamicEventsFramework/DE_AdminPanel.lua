@@ -187,6 +187,14 @@ function DEAdminPanel:layout()
     self.tabs:setWidth(self.width - 2)
     self.tabs:setHeight(self.height - top - 1)
 
+    -- Stretch the tab buttons to span the full tab-bar width. equalTabWidth uses
+    -- maxLength as each tab's width; ISTabPanel insets 1px each side with a 1px
+    -- gap between tabs, so divide the remainder evenly.
+    local nTabs = #self.tabs.viewList
+    if nTabs > 0 then
+        self.tabs.maxLength = math.floor((self.tabs.width - 2 - (nTabs - 1)) / nTabs)
+    end
+
     local vw = self.tabs.width
     local vh = self.tabs.height - self.tabs.tabHeight
     for _, view in ipairs({ self.activeTab, self.spawnTab, self.schedTab }) do
@@ -414,12 +422,16 @@ local function teleportLocalPlayer(x, y, z)
     else
         p:teleportTo(x + 0.5, y + 0.5, z)
     end
+    p:Say(string.format("[DE] Teleporting to (%d, %d)", x, y))
 end
 
 function DEAdminPanel:onGoTo()
-    local ev = self:selectedEvent()
-    if ev then
-        teleportLocalPlayer(ev.x, ev.y, ev.z or 0)
+    -- Works for a spawned event or a parked spawn — both carry coords, and a
+    -- parked spawn is exactly what you'd travel to so its chunk streams in.
+    local it = self.eventList.items[self.eventList.selected]
+    local target = it and it.item
+    if target and target.x then
+        teleportLocalPlayer(target.x, target.y, target.z or 0)
         self:afterAction()
     end
 end

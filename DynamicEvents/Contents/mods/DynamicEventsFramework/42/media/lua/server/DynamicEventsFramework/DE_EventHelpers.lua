@@ -49,8 +49,9 @@ function EH.tagOf(obj)
 end
 
 -- Like tagOf, but for a world object also falls back to the item it wraps: a
--- player who picks a dropped item up and puts it back down gets a fresh
--- IsoWorldInventoryObject, and only the InventoryItem still carries the tag.
+-- dropped item's tag lives durably on the InventoryItem, and a player who picks
+-- it up and puts it back down gets a fresh IsoWorldInventoryObject that only the
+-- InventoryItem still carries the tag through.
 function EH.ownerOf(obj)
     local uid = EH.tagOf(obj)
     if uid then return uid end
@@ -97,7 +98,9 @@ function EH.spawnItem(x, y, z, itemType, uid, opts)
     customiseItem(item, opts)
 
     -- Tag the item as well as the world object: the item is the durable half,
-    -- it keeps the tag through a pick-up and re-drop.
+    -- it keeps the tag through a save/reload and a pick-up and re-drop. (A player
+    -- who keeps the item carries the dead tag; harmless — cleanup only ever
+    -- scans ground squares, never inventories.)
     EH.tag(item, uid)
     EH.tag(sq:AddWorldInventoryItem(item, 0.3, 0.3, 0), uid)
 end
