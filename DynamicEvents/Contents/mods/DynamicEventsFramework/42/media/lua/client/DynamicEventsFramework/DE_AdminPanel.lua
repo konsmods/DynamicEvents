@@ -36,6 +36,7 @@ function DEAdminPanel:new()
     o.snapshot = nil
     o.lastRefresh = 0
     o.lastTypeSel = nil
+    o.lastEventSel = nil
     o.lastW, o.lastH = w, h
     return o
 end
@@ -58,7 +59,21 @@ function DEAdminPanel:createChildren()
     tabs:addView("Spawn", self.spawnTab)
     tabs:addView("Scheduler", self.schedTab)
 
+    -- The base created its resize widgets before our tabs, so the tabs now sit
+    -- on top of them and swallow the drag. Re-add them last so they're the
+    -- topmost children again and can receive the resize mouse events.
+    self:bringResizeWidgetsToFront()
+
     self:layout()
+end
+
+function DEAdminPanel:bringResizeWidgetsToFront()
+    for _, w in ipairs({ self.resizeWidget, self.resizeWidget2 }) do
+        if w then
+            self:removeChild(w)
+            self:addChild(w)
+        end
+    end
 end
 
 -- ----------------------------------------------------------------------------
@@ -92,10 +107,29 @@ local function makeTabPanel()
     return p
 end
 
+-- A read-only details panel: clipped rich text with a border. clip=true stencils
+-- the text to the box so it can never spill past its bounds (wheel scrolls it).
+local function makeDetail()
+    local rt = ISRichTextPanel:new(0, 0, 10, 10)
+    rt:initialise()
+    rt.background = true
+    rt.backgroundColor = { r = 0, g = 0, b = 0, a = 0.4 }
+    rt.borderColor = { r = 0.4, g = 0.4, b = 0.4, a = 1 }
+    rt.autosetheight = false
+    rt.clip = true
+    rt.marginLeft = PAD
+    rt.marginTop = PAD
+    rt.marginRight = PAD
+    rt.defaultFont = FONT
+    return rt
+end
+
 function DEAdminPanel:buildActiveTab()
     local panel = makeTabPanel()
     self.eventList = makeList()
+    self.eventDetail = makeDetail()
     panel:addChild(self.eventList)
+    panel:addChild(self.eventDetail)
     self.activeBtns = {
         makeButton(panel, self, self.onGoTo,      "Go To"),
         makeButton(panel, self, self.onClearSel,  "Clear"),
@@ -108,9 +142,11 @@ end
 
 function DEAdminPanel:buildSpawnTab()
     local panel = makeTabPanel()
-    self.typeList = makeList()
-    self.locList  = makeList()
+    self.typeList   = makeList()
+    self.typeDetail = makeDetail()
+    self.locList    = makeList()
     panel:addChild(self.typeList)
+    panel:addChild(self.typeDetail)
     panel:addChild(self.locList)
     self.spawnBtns = {
         makeButton(panel, self, self.onSpawnHere,   "Spawn Here"),
@@ -123,15 +159,7 @@ end
 
 function DEAdminPanel:buildSchedTab()
     local panel = makeTabPanel()
-    local rt = ISRichTextPanel:new(0, 0, 10, 10)
-    rt:initialise()
-    rt.background = true
-    rt.backgroundColor = { r = 0, g = 0, b = 0, a = 0.4 }
-    rt.borderColor = { r = 0.4, g = 0.4, b = 0.4, a = 1 }
-    rt.autosetheight = false
-    rt.marginLeft = PAD
-    rt.marginTop = PAD
-    rt.defaultFont = FONT
+    local rt = makeDetail()
     self.schedText = rt
     panel:addChild(rt)
     self.schedBtn = makeButton(panel, self, self.onClearCooldowns, "Clear Cooldowns")
@@ -167,20 +195,36 @@ function DEAdminPanel:layout()
         view:setHeight(vh)
     end
 
-    local rowY   = vh - PAD - BTN_H       -- top of the button row
-    local listH  = rowY - PAD * 2          -- lists fill above it
+    -- Keep the button row clear of the bottom resize band (the corner/edge
+    -- widgets live in the last resizeWidgetHeight() pixels of the window), plus
+    -- a little extra breathing room beneath the buttons.
+    local bottomReserve = math.max(PAD, self:resizeWidgetHeight() + 2) + 6
+    local rowY   = vh - bottomReserve - BTN_H   -- top of the button row
+    local listH  = rowY - PAD * 2                -- content fills above it
 
-    -- Active tab: one full-width list + button row.
+    -- Left column (lists) / right column (details) split.
+    local leftW  = math.floor((vw - PAD * 3) * 0.45)
+    local rightX = PAD * 2 + leftW
+    local rightW = vw - PAD - rightX
+
+    -- Active tab: event list (left) + details (right) + button row.
     self.eventList:setX(PAD); self.eventList:setY(PAD)
-    self.eventList:setWidth(vw - PAD * 2); self.eventList:setHeight(listH)
+    self.eventList:setWidth(leftW); self.eventList:setHeight(listH)
+    self.eventDetail:setX(rightX); self.eventDetail:setY(PAD)
+    self.eventDetail:setWidth(rightW); self.eventDetail:setHeight(listH)
+    self.eventDetail:paginate()
     layoutButtonRow(self.activeBtns, vw, rowY)
 
-    -- Spawn tab: two side-by-side lists + button row.
-    local half = (vw - PAD * 3) / 2
+    -- Spawn tab: type list (left) + details (top-right) + locations (bottom-right).
     self.typeList:setX(PAD); self.typeList:setY(PAD)
-    self.typeList:setWidth(half); self.typeList:setHeight(listH)
-    self.locList:setX(PAD * 2 + half); self.locList:setY(PAD)
-    self.locList:setWidth(half); self.locList:setHeight(listH)
+    self.typeList:setWidth(leftW); self.typeList:setHeight(listH)
+    local detailH = math.floor((listH - PAD) / 2)
+    self.typeDetail:setX(rightX); self.typeDetail:setY(PAD)
+    self.typeDetail:setWidth(rightW); self.typeDetail:setHeight(detailH)
+    self.typeDetail:paginate()
+    local locY = PAD + detailH + PAD
+    self.locList:setX(rightX); self.locList:setY(locY)
+    self.locList:setWidth(rightW); self.locList:setHeight(PAD + listH - locY)
     layoutButtonRow(self.spawnBtns, vw, rowY)
 
     -- Scheduler tab: full-width rich text + one button.
@@ -218,17 +262,11 @@ function DEAdminPanel:setData(snap)
     local keepUid = selectedKey(self.eventList, "uid")
     self.eventList:clear()
     for _, ev in ipairs(snap.events or {}) do
-        local dist = ev.distance and string.format(" ~%dt", ev.distance) or ""
-        local exp  = ev.expiresInH and string.format(", exp %.1fh", ev.expiresInH) or ""
-        self.eventList:addItem(string.format(
-            "%s  |  %s @ (%d,%d)  |  %dz  %dr  %.1fh old%s%s",
-            ev.uid, ev.name or ev.id, ev.x, ev.y,
-            ev.zombies or 0, ev.radius or 0, ev.ageH or 0, dist, exp), ev)
+        self.eventList:addItem(ev.name or ev.id or tostring(ev.uid), ev)
     end
     for _, pk in ipairs(snap.parked or {}) do
-        local dist = pk.distance and string.format(" ~%dt", pk.distance) or ""
-        self.eventList:addItem(string.format("(parked) %s @ (%d,%d)%s",
-            tostring(pk.id), pk.x, pk.y, dist), { parked = true })
+        pk.parked = true
+        self.eventList:addItem("(parked) " .. tostring(pk.id or pk.name or "?"), pk)
     end
     reselect(self.eventList, "uid", keepUid)
 
@@ -236,16 +274,72 @@ function DEAdminPanel:setData(snap)
     self.typeList:clear()
     for _, t in ipairs(snap.types or {}) do
         local mark = t.eligible and "[+]" or "[-]"
-        local why  = t.reason and ("  (" .. t.reason .. ")") or ""
-        self.typeList:addItem(string.format("%s %s  w%d  cd%dh%s",
-            mark, t.name, t.weight or 0, t.cooldownHours or 0, why), t)
+        self.typeList:addItem(string.format("%s %s", mark, t.name or t.id), t)
     end
     reselect(self.typeList, "id", keepId)
     self.lastTypeSel = self.typeList.selected
+    self.lastEventSel = self.eventList.selected
     self:refreshLocations()
+    self:updateEventDetail()
+    self:updateTypeDetail()
 
     self.schedText:setText(self:schedulerText(snap.scheduler, snap.types))
     self.schedText:paginate()
+end
+
+-- Details panels -------------------------------------------------------------
+
+local function kv(label, value)
+    return string.format(" <RGB:0.7,0.7,0.7> %s: <RGB:1,1,1> %s <LINE> ", label, tostring(value))
+end
+
+function DEAdminPanel:updateEventDetail()
+    local it = self.eventList.items[self.eventList.selected]
+    local ev = it and it.item
+    local out
+    if not ev then
+        out = " <LINE> <RGB:0.6,0.6,0.6> Select an event to see its details."
+    elseif ev.parked then
+        out = "<SIZE:medium> Parked spawn <SIZE:small> <LINE> <LINE> "
+            .. kv("Type", ev.id or "?")
+            .. kv("Position", string.format("(%d, %d)", ev.x or 0, ev.y or 0))
+            .. (ev.distance and kv("Distance", string.format("~%d tiles", ev.distance)) or "")
+            .. " <LINE> <RGB:0.7,0.7,0.7> Waiting for a player to stream in its chunk."
+    else
+        local exp = ev.expiresInH and string.format("%.1fh", ev.expiresInH) or "never"
+        out = "<SIZE:medium> " .. (ev.name or ev.id or "Event") .. " <SIZE:small> <LINE> <LINE> "
+            .. kv("UID", ev.uid or "?")
+            .. kv("Type", ev.id or "?")
+            .. kv("Position", string.format("(%d, %d)", ev.x or 0, ev.y or 0))
+            .. (ev.distance and kv("Distance", string.format("~%d tiles", ev.distance)) or "")
+            .. kv("Zombies", ev.zombies or 0)
+            .. kv("Radius", string.format("%d tiles", ev.radius or 0))
+            .. kv("Age", string.format("%.1fh", ev.ageH or 0))
+            .. kv("Expires in", exp)
+    end
+    self.eventDetail:setText(out)
+    self.eventDetail:paginate()
+end
+
+function DEAdminPanel:updateTypeDetail()
+    local t = self:selectedType()
+    local out
+    if not t then
+        out = " <LINE> <RGB:0.6,0.6,0.6> Select an event type."
+    else
+        local eligible = t.eligible
+            and " <RGB:0.5,1,0.5> yes <RGB:1,1,1> "
+            or  string.format(" <RGB:1,0.6,0.6> no (%s) <RGB:1,1,1> ", t.reason or "?")
+        out = "<SIZE:medium> " .. (t.name or t.id) .. " <SIZE:small> <LINE> <LINE> "
+            .. kv("ID", t.id or "?")
+            .. string.format(" <RGB:0.7,0.7,0.7> Eligible: <RGB:1,1,1> %s <LINE> ", eligible)
+            .. kv("Weight", t.weight or 0)
+            .. kv("Cooldown", string.format("%dh", t.cooldownHours or 0))
+            .. kv("Min days survived", t.minDaysSurvived or 0)
+            .. kv("Locations", t.locations and #t.locations or 0)
+    end
+    self.typeDetail:setText(out)
+    self.typeDetail:paginate()
 end
 
 function DEAdminPanel:refreshLocations()
@@ -379,10 +473,17 @@ function DEAdminPanel:prerender()
         self:layout()
     end
 
-    -- Selecting a different event type swaps the location list.
+    -- Selecting a different event type swaps the location list + details.
     if self.typeList and self.typeList.selected ~= self.lastTypeSel then
         self.lastTypeSel = self.typeList.selected
         self:refreshLocations()
+        self:updateTypeDetail()
+    end
+
+    -- Selecting a different active event refreshes its details.
+    if self.eventList and self.eventList.selected ~= self.lastEventSel then
+        self.lastEventSel = self.eventList.selected
+        self:updateEventDetail()
     end
 
     local now = getTimestampMs()
