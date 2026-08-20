@@ -356,6 +356,10 @@ function EM.addActive(typeId, x, y, z, info)
         expiresAt = expiresAt,
         radius  = info.radius or 0,
         zombies = info.zombies or 0,
+        -- Per-event override for how far cleanup clears spawned zombies; nil
+        -- falls back to the helper's default. Stored so it survives to cleanup,
+        -- including a cleanup parked across a restart.
+        zombieCleanupRadius = def and def.zombieCleanupRadius or nil,
     }
     EM._dirty = true
     DE.log("event '%s' [%s] now active at (%d, %d, %d), %d-tile footprint, %d zombie(s)%s",
@@ -394,6 +398,7 @@ local function cleanupRecord(uid, data)
         x = data.x, y = data.y, z = data.z,
         radius  = data.radius,
         zombies = data.zombies,
+        zombieCleanupRadius = data.zombieCleanupRadius,
     }
 end
 
@@ -565,6 +570,7 @@ local function persistableEvent(ev)
         expiresAt = ev.expiresAt,   -- nil for events with no lifetime
         radius  = ev.radius or 0,
         zombies = ev.zombies or 0,
+        zombieCleanupRadius = ev.zombieCleanupRadius,   -- nil = helper default
     }
 end
 

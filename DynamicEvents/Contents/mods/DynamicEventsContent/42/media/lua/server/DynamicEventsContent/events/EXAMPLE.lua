@@ -20,6 +20,7 @@ local EVENT = {
     -- warning     = { delay = 60 },            -- in-game seconds before spawn
     -- sound       = "MetaShotgun1",            -- played at spawn
     -- lifetimeHours = 72,                      -- auto-clear this long after spawn
+    -- zombieCleanupRadius = 20,                -- tiles around centre cleanup clears spawned zombies from (default 20)
 
     -- radio = {                                -- periodic emergency broadcasts
     --     frequency = 105600,                  -- kHz (105.6 MHz)

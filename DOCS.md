@@ -114,6 +114,9 @@ Optional:
 - `radio = { ... }` — periodic broadcasts (see below).
 - `lifetimeHours` (0) — in-game hours after spawn before the event auto-clears.
   0 means it stays until an admin clears it.
+- `zombieCleanupRadius` (20) — tiles around the event centre that cleanup clears
+  the event's spawned zombies (and corpses) from. Only affects tracked
+  `SpawnZombies`, not `SpawnHorde`.
 - `pulse = { intervalSeconds = 300, fn = function(x, y, z, ev) end }` — a callback
   that runs on that interval while the event is active and its site is loaded.
   Use it to keep acting on the world (e.g. drawing zombies toward a town).

@@ -528,18 +528,23 @@ end
 -- modData tag on one does not survive. Both go by radius instead.
 -- ----------------------------------------------------------------------------
 
-local ZOMBIE_CLEANUP_RADIUS = 20
+-- Default radius (tiles) around an event centre that its spawned zombies and
+-- their corpses are cleared from. An event overrides it with
+-- def.zombieCleanupRadius.
+local DEFAULT_ZOMBIE_CLEANUP_RADIUS = 20
 
--- Removes up to `count` loaded zombies near the site. Zombies can't be matched
--- individually after virtualization, so we remove this many from around the site.
-local function cleanupZombies(x, y, count)
+-- Removes up to `count` loaded zombies within `radius` tiles of the site.
+-- Zombies can't be matched individually after virtualization, so we remove this
+-- many from around the site.
+local function cleanupZombies(x, y, count, radius)
     if not count or count <= 0 then return end
     if not DE.Config.cleanupZombies then return end
 
     local list = cell() and cell():getZombieList()
     if not list then return end
 
-    local radiusSq = ZOMBIE_CLEANUP_RADIUS * ZOMBIE_CLEANUP_RADIUS
+    local r = radius or DEFAULT_ZOMBIE_CLEANUP_RADIUS
+    local radiusSq = r * r
     local doomed = {}
     for i = 0, list:size() - 1 do
         local zed = list:get(i)
@@ -564,15 +569,16 @@ end
 
 -- Removes dead zombie corpses in the same radius. No cell-level corpse list
 -- exists, so walk the radius; corpses can't be attributed, so all are removed.
-local function cleanupCorpses(x, y, z)
+local function cleanupCorpses(x, y, z, radius)
     if not DE.Config.cleanupZombies then return end
 
     local c = cell()
     if not c then return end
 
+    local r = radius or DEFAULT_ZOMBIE_CLEANUP_RADIUS
     local removed = 0
-    for dx = -ZOMBIE_CLEANUP_RADIUS, ZOMBIE_CLEANUP_RADIUS do
-        for dy = -ZOMBIE_CLEANUP_RADIUS, ZOMBIE_CLEANUP_RADIUS do
+    for dx = -r, r do
+        for dy = -r, r do
             local sq = c:getGridSquare(x + dx, y + dy, z)
             if sq then
                 local movables = sq:getStaticMovingObjects()
@@ -593,7 +599,7 @@ local function cleanupCorpses(x, y, z)
 end
 
 -- Removes everything an event left behind; only reaches loaded chunks. `ev` is
--- the manager's record for the event: uid, radius, zombies.
+-- the manager's record for the event: uid, radius, zombies, zombieCleanupRadius.
 function EH.cleanupEvent(x, y, z, ev)
     ev = ev or {}
 
@@ -601,8 +607,9 @@ function EH.cleanupEvent(x, y, z, ev)
     DE.dbg("cleanup [%s]: removed %d tagged object(s) within %d tiles",
         tostring(ev.uid), removed, (ev.radius or 0) + SWEEP_PADDING)
 
-    cleanupZombies(x, y, ev.zombies or 0)
-    cleanupCorpses(x, y, z)
+    local zr = ev.zombieCleanupRadius or DEFAULT_ZOMBIE_CLEANUP_RADIUS
+    cleanupZombies(x, y, ev.zombies or 0, zr)
+    cleanupCorpses(x, y, z, zr)
 end
 
 DE.EventHelpers = EH
