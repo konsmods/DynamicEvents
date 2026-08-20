@@ -52,9 +52,10 @@ end
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= "DynamicEventsFramework" or command ~= "Teleport" then return end
 
-    local player = getSpecificPlayer(0)
-    if player and args and args.x and args.y then
-        player:teleportTo(args.x, args.y, args.z or 0)
+    if args and args.x and args.y then
+        -- Use the authoritative server command; a client-side move doesn't stick.
+        SendCommandToServer(string.format("/teleportto %d,%d,%d",
+            args.x, args.y, args.z or 0))
     end
 end)
 

@@ -175,7 +175,8 @@ function DE.GoTo(uid, player)
         sendServerCommand(p, "DynamicEventsFramework", "Teleport",
             { x = data.x, y = data.y, z = data.z })
     else
-        p:teleportTo(data.x, data.y, data.z)
+        -- SP: move directly, centred on the tile like vanilla.
+        p:teleportTo(data.x + 0.5, data.y + 0.5, data.z or 0)
     end
 end
 

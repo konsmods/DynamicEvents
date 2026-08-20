@@ -404,9 +404,26 @@ function DEAdminPanel:afterAction()
     DE.requestState()
 end
 
+-- Teleport the local player the way vanilla does: the authoritative /teleportto
+-- server command in MP, a direct move in SP. The snapshot already carries the
+-- event's coords, so no server round-trip is needed.
+local function teleportLocalPlayer(x, y, z)
+    local p = getSpecificPlayer(0)
+    if not p or not x then return end
+    z = z or 0
+    if isClient() then
+        SendCommandToServer(string.format("/teleportto %d,%d,%d", x, y, z))
+    else
+        p:teleportTo(x + 0.5, y + 0.5, z)
+    end
+end
+
 function DEAdminPanel:onGoTo()
     local ev = self:selectedEvent()
-    if ev then DE.GoTo(ev.uid); self:afterAction() end
+    if ev then
+        teleportLocalPlayer(ev.x, ev.y, ev.z or 0)
+        self:afterAction()
+    end
 end
 
 function DEAdminPanel:onClearSel()
