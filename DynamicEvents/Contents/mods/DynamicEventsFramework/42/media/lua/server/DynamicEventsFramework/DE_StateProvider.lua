@@ -35,8 +35,8 @@ function DE.getStateSnapshot(player)
         local def = EM.get(ev.id)
         ev.name      = def and def.name or ev.id
         ev.ageH      = now - (ev.spawnedAt or now)
-        ev.expiresAt = data and data.expiresAt or nil
-        ev.expiresInH = ev.expiresAt and (ev.expiresAt - now) or nil
+        local expiresAt = data and data.expiresAt
+        ev.expiresInH = expiresAt and (expiresAt - now) or nil
     end
 
     local types = {}

@@ -191,13 +191,12 @@ draw them toward a town.
 `loot` is an item list, or `{ distribution = "TableName" }` to roll a vanilla
 loot table into it.
 
-> **Recommended: prefer `SpawnContainer` over loose ground loot** (`SpawnLoot` /
-> `SpawnItem`) for supplies. Loose items are tagged on the item itself so cleanup
-> can find them, which means the tag rides along on anything a player picks up and
-> keeps (harmless, but it lingers in the item's modData), and an item re-dropped
-> on the site can be swept when the event clears. A container's **contents are
-> untagged** — kept items stay clean — and a clear removes the container as one
-> tagged object. Use loose loot mainly for lore notes (with `permanent = true`).
+> **Prefer `SpawnContainer` over loose ground loot** (`SpawnLoot` / `SpawnItem`)
+> for supplies. Loose items carry the cleanup tag on the item itself, so it rides
+> along on anything a player keeps (harmless but lingering), and an item re-dropped
+> on the site can be swept up when the event clears. A container's **contents are
+> untagged**, and the crate clears as one tagged object. Use loose loot mainly for
+> lore notes (with `permanent = true`).
 
 ## Ownership and cleanup
 

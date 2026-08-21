@@ -141,24 +141,23 @@ function DE.GoTo(uid, player)
     local p = getPlayer(player)
     if not p then DE.log("No player"); return end
 
-    local data, target
-    if uid then
-        data = DE.EventManager.active[uid]
-        if not data then
-            report(p, "[DE] No tracked event with uid '%s'", tostring(uid))
-            return
-        end
-        target = uid
-    else
+    -- No uid given: travel to the nearest tracked event.
+    if not uid then
         local nearest = DE.EventManager.getActiveEventsNear(p:getX(), p:getY())[1]
         if not nearest then
             report(p, "[DE] No tracked events to travel to")
             return
         end
-        data, target = DE.EventManager.active[nearest.uid], nearest.uid
+        uid = nearest.uid
     end
 
-    report(p, "[DE] Teleporting to %s at (%d, %d, %d)", target, data.x, data.y, data.z)
+    local data = DE.EventManager.active[uid]
+    if not data then
+        report(p, "[DE] No tracked event with uid '%s'", tostring(uid))
+        return
+    end
+
+    report(p, "[DE] Teleporting to %s at (%d, %d, %d)", uid, data.x, data.y, data.z)
 
     if isServer() then
         -- MP: the client owns the actual move.

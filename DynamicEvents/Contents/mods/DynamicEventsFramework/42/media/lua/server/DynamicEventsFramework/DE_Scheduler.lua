@@ -157,16 +157,12 @@ local function tryInit()
     if restored then
         -- Wait one full interval from now so a restart never fires an event
         -- the moment the world comes back up.
-        DE.Scheduler.nextFireHour = DE.gameHours() + interval
+        DE.Scheduler.nextFireHour = startHour + interval
+        DE.log("scheduler started (restored %d active events)", DE.EventManager.getActiveCount())
     else
         -- Fresh world: wait out the grace period plus one interval before the
         -- first event, then keep that cadence.
         DE.Scheduler.nextFireHour = startHour + (DE.Config.gracePeriodHours or 0) + interval
-    end
-
-    if restored then
-        DE.log("scheduler started (restored %d active events)", DE.EventManager.getActiveCount())
-    else
         DE.log("scheduler started (fresh)")
     end
 end
